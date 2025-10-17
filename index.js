@@ -45,10 +45,11 @@ function getTodayKey() {
   return now.toISOString().split('T')[0]; // YYYY-MM-DD
 }
 
-function archiveData(data) {
-  if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR);
-  const archiveFile = path.join(ARCHIVE_DIR, `scores_${Date.now()}.json`);
-  fs.writeFileSync(archiveFile, JSON.stringify(data, null, 2));
+// Archive JSON to GCS in "archives/" folder
+async function archiveData(data) {
+  const archiveFileName = `archives/scores_${Date.now()}.json`;
+  const file = bucket.file(archiveFileName);
+  await file.save(JSON.stringify(data, null, 2));
 }
 
 async function getLeetcodeStats(username) {
