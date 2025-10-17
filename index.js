@@ -57,9 +57,15 @@ function getTotalLeaderboard(scores, groupId) {
 async function getPendingParticipants(chat, scores, groupId) {
   const today = getTodayKey();
   const postedUsers = Object.keys(scores[groupId]?.[today] || {});
+  
   const allMembers = (await chat.participants)
-    .map(p => p.notifyName || p.id.user)
-    .filter(u => !u.includes(BOT_NUMBER)); // exclude bot itself
+    .map(p => {
+      // Prefer notifyName, fallback to user ID (number)
+      const name = p.notifyName || p.id.user.split('@')[0];
+      return name;
+    })
+    .filter(u => u !== BOT_NUMBER); // exclude bot itself
+
   const pending = allMembers.filter(u => !postedUsers.includes(u));
   return pending;
 }
