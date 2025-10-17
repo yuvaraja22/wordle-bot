@@ -87,7 +87,7 @@ async function getLeetcodeStats(username) {
     let statsMsg = `📊 LeetCode stats for *${username}*:\n`;
     statsMsg += `🏆 Total problems solved: ${totalSolved}\n`;
     user.submitStats.acSubmissionNum.forEach(d => {
-      if(${d.difficulty} === "All")
+      if(d.difficulty === "All")
         statsMsg += `🏆 Total problems solved: ${d.count}\n`;
       else
         statsMsg += `${d.difficulty}: ${d.count}\n`;
