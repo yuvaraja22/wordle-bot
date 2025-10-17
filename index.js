@@ -129,22 +129,22 @@ async function getLeetcodeStats(username) {
     history[today] = { total: totalSolved, Easy: easy, Medium: medium, Hard: hard };
     await saveLeetcodeHistory(history);
 
-    // === Compose message ===
-    let msg = `📊 *LeetCode Stats for ${username}*\n\n`;
-
-    msg += `🧩 *Solved Today*\n`;
-    msg += `🟢 Easy: ${diff.Easy}\n`;
-    msg += `🟠 Medium: ${diff.Medium}\n`;
-    msg += `🔴 Hard: ${diff.Hard}\n`;
-    msg += `🏆 Total Today: ${diff.total}\n\n`;
-
-    msg += `📚 *Total Solved*\n`;
-    msg += `🟢 Easy: ${easy}\n`;
-    msg += `🟠 Medium: ${medium}\n`;
-    msg += `🔴 Hard: ${hard}\n`;
-    msg += `🏁 All-Time Total: ${totalSolved}`;
-
-    return msg;
+  const formattedStats = `
+  📊 LeetCode Stats — ${leetcodeUsername}
+  
+  🕐 Solved Today
+  • Easy   : **${todayStats.easy}**
+  • Medium : **${todayStats.medium}**
+  • Hard   : **${todayStats.hard}**
+  • Total  : **${todayStats.total}**
+  
+  📈 Overall Progress
+  • Easy   : **${currentStats.easySolved}**
+  • Medium : **${currentStats.mediumSolved}**
+  • Hard   : **${currentStats.hardSolved}**
+  • Total  : **${currentStats.totalSolved}**
+  `;
+  return formattedStats;
   } catch (err) {
     console.error('getLeetcodeStats error:', err?.response?.data ?? err);
     return `❌ Error fetching stats for ${username}`;
