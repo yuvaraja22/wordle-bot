@@ -85,7 +85,6 @@ async function getLeetcodeStats(username) {
 
     // Compose stats message
     let statsMsg = `📊 LeetCode stats for *${username}*:\n`;
-    statsMsg += `🏆 Total problems solved: ${totalSolved}\n`;
     user.submitStats.acSubmissionNum.forEach(d => {
       if(d.difficulty === "All")
         statsMsg += `🏆 Total problems solved: ${d.count}\n`;
@@ -163,7 +162,7 @@ client.on('message', async (msg) => {
 
   // ===== LEETCODE LOGIC (only for TARGET_GROUP_NAME) =====
   if (chat.name === TARGET_GROUP_NAME) {
-    if (/^\/minustats?$/i.test(text)) {
+    if (/^\/minustatus?$/i.test(text)) {
       const stats = await getLeetcodeStats('mathanika');
       await msg.reply(stats);
     }
