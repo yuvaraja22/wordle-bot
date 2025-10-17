@@ -129,8 +129,8 @@ if (wordleMatch) {
   let [_, gameNumber, attempts] = wordleMatch;
   gameNumber = gameNumber.replace(/,/g, ''); // Remove commas
 
-  // Convert X to 0
-  attempts = attempts.toUpperCase() === 'X' ? 0 : parseInt(attempts);
+  // Convert X to 7
+  attempts = attempts.toUpperCase() === 'X' ? 7 : parseInt(attempts);
 
   const today = getTodayKey();
   if (!scores[groupId][today]) scores[groupId][today] = {};
