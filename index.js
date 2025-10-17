@@ -135,21 +135,31 @@ async function getLeetcodeStats(username) {
 // === LEADERBOARDS ===
 async function getDailyLeaderboard(groupId) {
   const today = getTodayKey();
-  const [rows] = await db.execute(`SELECT player_name, score FROM scores WHERE group_id = ? AND score_date = ?`, [groupId, today]);
+  const [rows] = await db.execute(
+    `SELECT player_name, score FROM scores WHERE group_id = ? AND score_date = ?`,
+    [groupId, today]
+  );
   if (rows.length === 0) return '📊 No scores submitted today yet!';
 
-  const sorted = rows.sort((a,b) => a.score - b.score);
-  const board = sorted.map((r,i)=>`${i+1}. ${r.player_name}: ${r.score}`).join('\n');
+  // Sort descending — higher score first
+  const sorted = rows.sort((a, b) => b.score - a.score);
+  const board = sorted.map((r, i) => `${i + 1}. ${r.player_name}: ${r.score}`).join('\n');
   return `🏆 *Today's Leaderboard (${today})*\n\n${board}`;
 }
 
 async function getTotalLeaderboard(groupId) {
-  const [rows] = await db.execute(`SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`, [groupId]);
+  const [rows] = await db.execute(
+    `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`,
+    [groupId]
+  );
   if (rows.length === 0) return '📊 No total scores recorded yet.';
-  const sorted = rows.sort((a,b)=>a.total_score - b.total_score);
-  const board = sorted.map((r,i)=>`${i+1}. ${r.player_name}: ${r.total_score}`).join('\n');
+
+  // Sort descending — higher total score first
+  const sorted = rows.sort((a, b) => b.total_score - a.total_score);
+  const board = sorted.map((r, i) => `${i + 1}. ${r.player_name}: ${r.total_score}`).join('\n');
   return `🏁 *All-Time Leaderboard*\n\n${board}`;
 }
+
 
 // Pending participants
 async function getPendingParticipants(chat) {
@@ -210,22 +220,35 @@ client.on('message', async msg => {
   }
 
   // Handle Wordle submission
-  const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
-  if (wordleMatch) {
-    let [_, gameNumber, attempts] = wordleMatch;
-    gameNumber = gameNumber.replace(/,/g,'');
-    attempts = attempts.toUpperCase() === 'X' ? 7 : parseInt(attempts);
+// ===== HANDLE WORDLE RESULTS =====
+const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
+if (wordleMatch) {
+  let [_, gameNumber, attempts] = wordleMatch;
+  gameNumber = gameNumber.replace(/,/g, ''); // Remove commas
 
-    const today = getTodayKey();
-    const [existing] = await db.execute(`SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`, [groupId, senderName, today]);
-    if (existing.length > 0) {
-      await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
-      return;
-    }
+  // Convert X to 7 (failed)
+  attempts = attempts.toUpperCase() === 'X' ? 7 : parseInt(attempts);
 
-    await db.execute(`INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`, [groupId, senderName, today, attempts]);
-    await msg.reply(await getDailyLeaderboard(groupId));
+  // New scoring: 1 try → 6 points, 2 tries → 5, ..., 6 tries → 1, X → 0
+  let score = attempts === 7 ? 0 : 7 - attempts;
+
+  const today = getTodayKey();
+  if (!scores[groupId][today]) scores[groupId][today] = {};
+
+  // Prevent duplicate
+  if (scores[groupId][today][senderName] !== undefined) {
+    await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
+    return;
   }
+
+  // Record score
+  scores[groupId][today][senderName] = score;
+  await saveScores(scores);
+
+  // Show updated current leaderboard immediately
+  const board = getDailyLeaderboard(scores, groupId, today);
+  await msg.reply(board);
+}
 });
 
 // Daily 8PM IST LeetCode stats
