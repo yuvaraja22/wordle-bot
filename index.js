@@ -20,6 +20,26 @@ const BUCKET_NAME = 'wordle-bot-storage'; // your GCS bucket name
 const storage = new Storage();
 const bucket = storage.bucket(BUCKET_NAME);
 
+// === LeetCode Stats File in GCS ===
+const LEETCODE_STATS_FILE = 'leetcode_stats.json';
+
+// === Helper to Load LeetCode Stats from GCS ===
+async function loadLeetcodeHistory() {
+  try {
+    const file = bucket.file(LEETCODE_STATS_FILE);
+    const [contents] = await file.download();
+    return JSON.parse(contents.toString());
+  } catch {
+    return {}; // if file doesn't exist
+  }
+}
+
+// === Helper to Save LeetCode Stats to GCS ===
+async function saveLeetcodeHistory(data) {
+  const file = bucket.file(LEETCODE_STATS_FILE);
+  await file.save(JSON.stringify(data, null, 2));
+}
+
 // === HELPERS ===
 async function loadScores() {
   try {
@@ -53,6 +73,7 @@ async function archiveData(data) {
   await file.save(JSON.stringify(data, null, 2));
 }
 
+// === Updated getLeetcodeStats ===
 async function getLeetcodeStats(username) {
   try {
     const url = `https://leetcode.com/graphql/`;
@@ -79,16 +100,33 @@ async function getLeetcodeStats(username) {
     const user = res.data.data.matchedUser;
     if (!user) return `❌ Could not fetch stats for ${username}`;
 
-    // Total problems solved
     const totalSolved = user.submitStats.acSubmissionNum
       .reduce((sum, d) => sum + d.count, 0);
 
-    // Compose stats message
+    // Load previous history
+    const history = await loadLeetcodeHistory();
+    const today = getTodayKey();
+
+    // Determine yesterday's date
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = yesterday.toISOString().split('T')[0];
+
+    const yesterdaySolved = history[yesterdayKey] || totalSolved;
+    const solvedToday = totalSolved - yesterdaySolved;
+
+    // Save today's snapshot
+    history[today] = totalSolved;
+    await saveLeetcodeHistory(history);
+
+    // Build message
     let statsMsg = `📊 LeetCode stats for *${username}*:\n`;
+    statsMsg += `🏆 Total solved: ${totalSolved}\n`;
+    statsMsg += `📈 Solved today: ${solvedToday > 0 ? solvedToday : 0}\n\n`;
+
+    // Difficulty breakdown
     user.submitStats.acSubmissionNum.forEach(d => {
-      if(d.difficulty === "All")
-        statsMsg += `🏆 Total problems solved: ${d.count}\n`;
-      else
+      if (d.difficulty !== "All")
         statsMsg += `${d.difficulty}: ${d.count}\n`;
     });
 
