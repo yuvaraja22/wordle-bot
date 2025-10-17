@@ -12,7 +12,7 @@ const DATA_FILE = path.resolve('./scores.json');
 const ARCHIVE_DIR = path.resolve('./archives');
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const FILE_NAME = 'scores.json'; // main JSON file in bucket
-const TARGET_GROUP_NAME = 'Test M1'; // replace with your group name
+const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
 const LEETCODE_USER = 'mathanika';
 const BUCKET_NAME = 'wordle-bot-storage'; // your GCS bucket name
 
