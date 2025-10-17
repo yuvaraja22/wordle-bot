@@ -85,7 +85,6 @@ async function getLeetcodeStats(username) {
             acSubmissionNum {
               difficulty
               count
-              submissions
             }
           }
         }
@@ -97,43 +96,57 @@ async function getLeetcodeStats(username) {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    const user = res.data.data.matchedUser;
+    const user = res.data?.data?.matchedUser;
     if (!user) return `❌ Could not fetch stats for ${username}`;
 
-    const totalSolved = user.submitStats.acSubmissionNum
-      .reduce((sum, d) => sum + d.count, 0);
+    const acArray = user.submitStats.acSubmissionNum || [];
 
-    // Load previous history
+    // Extract counts by difficulty
+    const getCount = (diff) => acArray.find(d => d.difficulty === diff)?.count || 0;
+    const totalSolved = getCount('All');
+    const easy = getCount('Easy');
+    const medium = getCount('Medium');
+    const hard = getCount('Hard');
+
+    // === Load history from GCS ===
     const history = await loadLeetcodeHistory();
     const today = getTodayKey();
-
-    // Determine yesterday's date
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayKey = yesterday.toISOString().split('T')[0];
 
-    const yesterdaySolved = history[yesterdayKey] || totalSolved;
-    const solvedToday = totalSolved - yesterdaySolved;
+    const prev = history[yesterdayKey] || { total: totalSolved, Easy: easy, Medium: medium, Hard: hard };
 
-    // Save today's snapshot
-    history[today] = totalSolved;
+    // === Compute solved today ===
+    const diff = {
+      Easy: Math.max(0, easy - (prev.Easy || 0)),
+      Medium: Math.max(0, medium - (prev.Medium || 0)),
+      Hard: Math.max(0, hard - (prev.Hard || 0)),
+      total: Math.max(0, totalSolved - (prev.total || 0)),
+    };
+
+    // === Save today's snapshot to GCS ===
+    history[today] = { total: totalSolved, Easy: easy, Medium: medium, Hard: hard };
     await saveLeetcodeHistory(history);
 
-    // Build message
-    let statsMsg = `📊 LeetCode stats for *${username}*:\n`;
-    statsMsg += `🏆 Total solved: ${totalSolved}\n`;
-    statsMsg += `📈 Solved today: ${solvedToday > 0 ? solvedToday : 0}\n\n`;
+    // === Compose message ===
+    let msg = `📊 *LeetCode Stats for ${username}*\n\n`;
 
-    // Difficulty breakdown
-    user.submitStats.acSubmissionNum.forEach(d => {
-      if (d.difficulty !== "All")
-        statsMsg += `${d.difficulty}: ${d.count}\n`;
-    });
+    msg += `🧩 *Solved Today*\n`;
+    msg += `🟢 Easy: ${diff.Easy}\n`;
+    msg += `🟠 Medium: ${diff.Medium}\n`;
+    msg += `🔴 Hard: ${diff.Hard}\n`;
+    msg += `🏆 Total Today: ${diff.total}\n\n`;
 
-    return statsMsg;
+    msg += `📚 *Total Solved*\n`;
+    msg += `🟢 Easy: ${easy}\n`;
+    msg += `🟠 Medium: ${medium}\n`;
+    msg += `🔴 Hard: ${hard}\n`;
+    msg += `🏁 All-Time Total: ${totalSolved}`;
 
+    return msg;
   } catch (err) {
-    console.error(err);
+    console.error('getLeetcodeStats error:', err?.response?.data ?? err);
     return `❌ Error fetching stats for ${username}`;
   }
 }
