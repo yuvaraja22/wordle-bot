@@ -12,11 +12,12 @@ const LEETCODE_USER = 'mathanika';
 
 // === CLOUD SQL CONFIG ===
 const dbConfig = {
-  host: 'YOUR_CLOUD_SQL_HOST',
-  user: 'YOUR_DB_USER',
-  password: 'YOUR_DB_PASSWORD',
-  database: 'wordle_bot',
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER || 'user',
+  password: process.env.DB_PASSWORD,   // pulled from environment variable
+  database: process.env.DB_NAME || 'wordle_bot',
 };
+
 
 // === UTILS ===
 function getParticipantName(p) {
