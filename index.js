@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 import cron from 'node-cron';
+import { Storage } from '@google-cloud/storage';
 
 // === CONFIG ===
 const DATA_FILE = path.resolve('./scores.json');
@@ -12,15 +13,26 @@ const ARCHIVE_DIR = path.resolve('./archives');
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Test M1'; // replace with your group name
 const LEETCODE_USER = 'mathanika';
+const BUCKET_NAME = 'wordle-bot-storage'; // your GCS bucket name
+
+// === GCS SETUP ===
+const storage = new Storage();
+const bucket = storage.bucket(BUCKET_NAME);
 
 // === HELPERS ===
-function loadScores() {
-  if (!fs.existsSync(DATA_FILE)) return {};
-  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+async function loadScores() {
+  try {
+    const file = bucket.file(FILE_NAME);
+    const [contents] = await file.download();
+    return JSON.parse(contents.toString());
+  } catch {
+    return {}; // if file doesn't exist
+  }
 }
 
-function saveScores(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+async function saveScores(data) {
+  const file = bucket.file(FILE_NAME);
+  await file.save(JSON.stringify(data, null, 2));
 }
 
 function getParticipantName(p) {
