@@ -10,7 +10,7 @@ import cron from 'node-cron';
 const DATA_FILE = path.resolve('./scores.json');
 const ARCHIVE_DIR = path.resolve('./archives');
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
-const TARGET_GROUP_NAME = 'MyWordleGroup'; // replace with your group name
+const TARGET_GROUP_NAME = 'Test M1'; // replace with your group name
 const LEETCODE_USER = 'mathanika';
 
 // === HELPERS ===
