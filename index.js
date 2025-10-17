@@ -154,17 +154,18 @@ client.on('message', async (msg) => {
   const chat = await msg.getChat();
   if (!chat.isGroup) return;
 
-      // ===== LEETCODE LOGIC (only for TARGET_GROUP_NAME) =====
-    if (chat.name === TARGET_GROUP_NAME) {
-      if (/^\/minustats?$/i.test(text)) {
-        const stats = await getLeetcodeStats('mathanika');
-        await msg.reply(stats);
-      }
-    }
-
   const groupId = chat.id._serialized;
   const senderName = msg._data.notifyName || msg.author || msg.from;
   const text = msg.body.trim();
+
+  // ===== LEETCODE LOGIC (only for TARGET_GROUP_NAME) =====
+  if (chat.name === TARGET_GROUP_NAME) {
+    if (/^\/minustats?$/i.test(text)) {
+      const stats = await getLeetcodeStats('mathanika');
+      await msg.reply(stats);
+    }
+  }
+  
   let scores = loadScores();
   if (!scores[groupId]) scores[groupId] = {};
 
