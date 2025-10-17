@@ -84,10 +84,13 @@ async function getLeetcodeStats(username) {
       .reduce((sum, d) => sum + d.count, 0);
 
     // Compose stats message
-    let statsMsg = `📊 LeetCode stats for ${username}:\n`;
+    let statsMsg = `📊 LeetCode stats for *${username}*:\n`;
     statsMsg += `🏆 Total problems solved: ${totalSolved}\n`;
     user.submitStats.acSubmissionNum.forEach(d => {
-      statsMsg += `${d.difficulty}: ${d.count} AC / ${d.submissions} submissions\n`;
+      if(${d.difficulty} === "All")
+        statsMsg += `🏆 Total problems solved: ${d.count}\n`;
+      else
+        statsMsg += `${d.difficulty}: ${d.count}\n`;
     });
 
     return statsMsg;
