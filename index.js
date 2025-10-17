@@ -19,6 +19,11 @@ function saveScores(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
+function getParticipantName(p) {
+  // Use notifyName if exists, else fallback to user ID or number
+  return p.notifyName || p.id._serialized || p.id.user.split('@')[0];
+}
+
 function getTodayKey() {
   const now = new Date();
   return now.toISOString().split('T')[0]; // YYYY-MM-DD
@@ -54,19 +59,16 @@ function getTotalLeaderboard(scores, groupId) {
   return `🏁 *All-Time Leaderboard*\n\n${board}`;
 }
 
+
 async function getPendingParticipants(chat, scores, groupId) {
   const today = getTodayKey();
   const postedUsers = Object.keys(scores[groupId]?.[today] || {});
-  
-  const allMembers = (await chat.participants)
-    .map(p => {
-      // Prefer notifyName, fallback to user ID (number)
-      const name = p.notifyName || p.id.user.split('@')[0];
-      return name;
-    })
-    .filter(u => u !== BOT_NUMBER); // exclude bot itself
 
-  const pending = allMembers.filter(u => !postedUsers.includes(u));
+  const allMembers = (await chat.participants)
+    .map(getParticipantName)
+    .filter(name => name !== BOT_NUMBER); // exclude bot
+
+  const pending = allMembers.filter(name => !postedUsers.includes(name));
   return pending;
 }
 
@@ -115,7 +117,7 @@ client.on('message', async (msg) => {
       await msg.reply('🎉 Everyone has submitted today’s Wordle!');
       } else {
       // put each user in a new line
-      await msg.reply(`⏳ Pending Wordle submissions:\n${pending.join('\n')}`);
+      await msg.reply(`⏳ Pending Wordle submissions:\n${pending.join('\s')}`);
       }
       return;
     }
