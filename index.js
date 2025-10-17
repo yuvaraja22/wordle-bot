@@ -3,11 +3,15 @@ const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
+import axios from 'axios';
+import cron from 'node-cron';
 
 // === CONFIG ===
 const DATA_FILE = path.resolve('./scores.json');
 const ARCHIVE_DIR = path.resolve('./archives');
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
+const TARGET_GROUP_NAME = 'MyWordleGroup'; // replace with your group name
+const LEETCODE_USER = 'mathanika';
 
 // === HELPERS ===
 function loadScores() {
@@ -33,6 +37,51 @@ function archiveData(data) {
   if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR);
   const archiveFile = path.join(ARCHIVE_DIR, `scores_${Date.now()}.json`);
   fs.writeFileSync(archiveFile, JSON.stringify(data, null, 2));
+}
+
+async function getLeetcodeStats(username) {
+  try {
+    const url = `https://leetcode.com/graphql/`;
+    const query = {
+      query: `query getUserProfile($username: String!) {
+        matchedUser(username: $username) {
+          username
+          submitStats {
+            acSubmissionNum {
+              difficulty
+              count
+              submissions
+            }
+          }
+        }
+      }`,
+      variables: { username },
+    };
+
+    const res = await axios.post(url, query, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const user = res.data.data.matchedUser;
+    if (!user) return `❌ Could not fetch stats for ${username}`;
+
+    // Total problems solved
+    const totalSolved = user.submitStats.acSubmissionNum
+      .reduce((sum, d) => sum + d.count, 0);
+
+    // Compose stats message
+    let statsMsg = `📊 LeetCode stats for ${username}:\n`;
+    statsMsg += `🏆 Total problems solved: ${totalSolved}\n`;
+    user.submitStats.acSubmissionNum.forEach(d => {
+      statsMsg += `${d.difficulty}: ${d.count} AC / ${d.submissions} submissions\n`;
+    });
+
+    return statsMsg;
+
+  } catch (err) {
+    console.error(err);
+    return `❌ Error fetching stats for ${username}`;
+  }
 }
 
 function getDailyLeaderboard(scores, groupId, today) {
@@ -90,6 +139,14 @@ client.on('ready', () => {
 client.on('message', async (msg) => {
   const chat = await msg.getChat();
   if (!chat.isGroup) return;
+
+      // ===== LEETCODE LOGIC (only for TARGET_GROUP_NAME) =====
+    if (chat.name === TARGET_GROUP_NAME) {
+      if (/^\/minustats?$/i.test(text)) {
+        const stats = await getLeetcodeStats('mathanika');
+        await msg.reply(stats);
+      }
+    }
 
   const groupId = chat.id._serialized;
   const senderName = msg._data.notifyName || msg.author || msg.from;
@@ -157,6 +214,18 @@ if (wordleMatch) {
   const board = getDailyLeaderboard(scores, groupId, today);
   await msg.reply(board);
 }
+});
+
+
+// === DAILY 8PM LEETCODE STATS ===
+cron.schedule('0 20 * * *', async () => {
+  const chats = await client.getChats();
+  const targetChat = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
+  if (!targetChat) return console.log('Target group not found.');
+
+  const stats = await getLeetcodeStats(LEETCODE_USER);
+  await targetChat.sendMessage(stats);
+  console.log('✅ Daily LeetCode stats sent');
 });
 
 // === START BOT ===
