@@ -221,32 +221,38 @@ client.on('message', async msg => {
 
   // Handle Wordle submission
 // ===== HANDLE WORDLE RESULTS =====
+// === HANDLE WORDLE RESULTS ===
 const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
 if (wordleMatch) {
   let [_, gameNumber, attempts] = wordleMatch;
   gameNumber = gameNumber.replace(/,/g, ''); // Remove commas
 
-  // Convert X to 7 (failed)
-  attempts = attempts.toUpperCase() === 'X' ? 7 : parseInt(attempts);
+  // Convert X → 7
+  let score = attempts.toUpperCase() === 'X' ? 7 : parseInt(attempts);
 
-  // New scoring: 1 try → 6 points, 2 tries → 5, ..., 6 tries → 1, X → 0
-  let score = attempts === 7 ? 0 : 7 - attempts;
+  score = 7 - score;
 
   const today = getTodayKey();
-  if (!scores[groupId][today]) scores[groupId][today] = {};
 
-  // Prevent duplicate
-  if (scores[groupId][today][senderName] !== undefined) {
+  // Check if player already submitted today
+  const [existing] = await db.execute(
+    `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
+    [groupId, senderName, today]
+  );
+
+  if (existing.length > 0) {
     await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
     return;
   }
 
-  // Record score
-  scores[groupId][today][senderName] = score;
-  await saveScores(scores);
+  // Insert score
+  await db.execute(
+    `INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`,
+    [groupId, senderName, today, score]
+  );
 
-  // Show updated current leaderboard immediately
-  const board = getDailyLeaderboard(scores, groupId, today);
+  // Show updated leaderboard
+  const board = await getDailyLeaderboard(groupId);
   await msg.reply(board);
 }
 });
