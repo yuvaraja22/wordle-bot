@@ -167,8 +167,8 @@ client.on('message', async (msg) => {
       await msg.reply(stats);
     }
   }
-  
-  let scores = loadScores();
+  // Wait for the data to load from GCS
+  let scores = await loadScores();
   if (!scores[groupId]) scores[groupId] = {};
 
   // ===== COMMANDS =====
