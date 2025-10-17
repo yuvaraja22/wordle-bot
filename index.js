@@ -116,8 +116,9 @@ async function getLeetcodeStats(username) {
 
     // Save today's stats
     await db.execute(
-      `REPLACE INTO leetcode_stats(stat_date, total, easy, medium, hard) VALUES (?, ?, ?, ?, ?)`,
-      [today, totalSolved, easy, medium, hard]
+      `REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [today, username, totalSolved, easy, medium, hard]
     );
 
     let msg = `*LeetCode Stats for ${username}*\n\n`;
