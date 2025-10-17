@@ -73,83 +73,82 @@ async function archiveData(data) {
   await file.save(JSON.stringify(data, null, 2));
 }
 
-// === Updated getLeetcodeStats ===
-async function getLeetcodeStats(username) {
+async function handleMinuStats(msg) {
+  const chatId = msg.chat.id;
+  const leetcodeUsername = 'mathanika';
+  const bucketName = 'wordle-bot-storage';
+  const statsFile = 'leetcode_stats.json';
+
   try {
-    const url = `https://leetcode.com/graphql/`;
-    const query = {
-      query: `query getUserProfile($username: String!) {
-        matchedUser(username: $username) {
-          username
-          submitStats {
-            acSubmissionNum {
-              difficulty
-              count
-            }
-          }
-        }
-      }`,
-      variables: { username },
+    // Fetch current stats
+    const response = await axios.get(`https://leetcode-stats-api.herokuapp.com/${leetcodeUsername}`);
+    const currentStats = response.data;
+
+    const todayDate = new Date().toISOString().split('T')[0];
+
+    // Try loading previous stats from GCS
+    let prevStats = null;
+    try {
+      const [file] = await storage.bucket(bucketName).file(statsFile).download();
+      const allStats = JSON.parse(file.toString());
+      prevStats = allStats[todayDate] || null;
+    } catch {
+      prevStats = null;
+    }
+
+    // If no stats exist yet, initialize
+    const newStats = {
+      easySolved: currentStats.easySolved,
+      mediumSolved: currentStats.mediumSolved,
+      hardSolved: currentStats.hardSolved,
+      totalSolved: currentStats.totalSolved
     };
 
-    const res = await axios.post(url, query, {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    // Save today's stats in GCS
+    let allStats = {};
+    try {
+      const [file] = await storage.bucket(bucketName).file(statsFile).download();
+      allStats = JSON.parse(file.toString());
+    } catch {
+      allStats = {};
+    }
+    allStats[todayDate] = newStats;
+    await storage.bucket(bucketName).file(statsFile).save(JSON.stringify(allStats, null, 2));
 
-    const user = res.data?.data?.matchedUser;
-    if (!user) return `❌ Could not fetch stats for ${username}`;
+    // Compute diff (solved today)
+    let todayStats = { easy: 0, medium: 0, hard: 0, total: 0 };
+    if (prevStats) {
+      todayStats.easy = currentStats.easySolved - prevStats.easySolved;
+      todayStats.medium = currentStats.mediumSolved - prevStats.mediumSolved;
+      todayStats.hard = currentStats.hardSolved - prevStats.hardSolved;
+      todayStats.total = currentStats.totalSolved - prevStats.totalSolved;
+    }
 
-    const acArray = user.submitStats.acSubmissionNum || [];
+    // Build minimalist formatted message
+    const formattedStats = `
+📊 LeetCode Stats — ${leetcodeUsername}
 
-    // Extract counts by difficulty
-    const getCount = (diff) => acArray.find(d => d.difficulty === diff)?.count || 0;
-    const totalSolved = getCount('All');
-    const easy = getCount('Easy');
-    const medium = getCount('Medium');
-    const hard = getCount('Hard');
+🕐 Solved Today
+• Easy   : **${todayStats.easy}**
+• Medium : **${todayStats.medium}**
+• Hard   : **${todayStats.hard}**
+• Total  : **${todayStats.total}**
 
-    // === Load history from GCS ===
-    const history = await loadLeetcodeHistory();
-    const today = getTodayKey();
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayKey = yesterday.toISOString().split('T')[0];
+📈 Overall Progress
+• Easy   : **${currentStats.easySolved}**
+• Medium : **${currentStats.mediumSolved}**
+• Hard   : **${currentStats.hardSolved}**
+• Total  : **${currentStats.totalSolved}**
+`;
 
-    const prev = history[yesterdayKey] || { total: totalSolved, Easy: easy, Medium: medium, Hard: hard };
+    await bot.sendMessage(chatId, formattedStats, { parse_mode: 'Markdown' });
 
-    // === Compute solved today ===
-    const diff = {
-      Easy: Math.max(0, easy - (prev.Easy || 0)),
-      Medium: Math.max(0, medium - (prev.Medium || 0)),
-      Hard: Math.max(0, hard - (prev.Hard || 0)),
-      total: Math.max(0, totalSolved - (prev.total || 0)),
-    };
-
-    // === Save today's snapshot to GCS ===
-    history[today] = { total: totalSolved, Easy: easy, Medium: medium, Hard: hard };
-    await saveLeetcodeHistory(history);
-
-  const formattedStats = `
-  📊 LeetCode Stats — ${leetcodeUsername}
-  
-  🕐 Solved Today
-  • Easy   : **${todayStats.easy}**
-  • Medium : **${todayStats.medium}**
-  • Hard   : **${todayStats.hard}**
-  • Total  : **${todayStats.total}**
-  
-  📈 Overall Progress
-  • Easy   : **${currentStats.easySolved}**
-  • Medium : **${currentStats.mediumSolved}**
-  • Hard   : **${currentStats.hardSolved}**
-  • Total  : **${currentStats.totalSolved}**
-  `;
-  return formattedStats;
-  } catch (err) {
-    console.error('getLeetcodeStats error:', err?.response?.data ?? err);
-    return `❌ Error fetching stats for ${username}`;
+  } catch (error) {
+    console.error('Error fetching or storing LeetCode stats:', error);
+    await bot.sendMessage(chatId, '❌ Failed to fetch LeetCode stats.');
   }
 }
+
 
 function getDailyLeaderboard(scores, groupId, today) {
   const groupScores = scores[groupId]?.[today] || {};
