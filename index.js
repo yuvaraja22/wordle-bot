@@ -73,7 +73,7 @@ async function archiveData(data) {
   await file.save(JSON.stringify(data, null, 2));
 }
 
-async function handleMinuStats(msg) {
+async function getLeetcodeStats(msg) {
   const chatId = msg.chat.id;
   const leetcodeUsername = 'mathanika';
   const bucketName = 'wordle-bot-storage';
