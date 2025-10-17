@@ -123,30 +123,32 @@ client.on('message', async (msg) => {
   }
 
   // ===== HANDLE WORDLE RESULTS =====
-  // Handles commas in the game number like "1,581"
-  const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+(\d)\/6/i);
-  if (wordleMatch) {
-    let [_, gameNumber, attempts] = wordleMatch;
-    gameNumber = gameNumber.replace(/,/g, ''); // Remove commas
-    attempts = parseInt(attempts);
+// Handles commas in the game number like "1,581" and "X/6" (score 0)
+const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
+if (wordleMatch) {
+  let [_, gameNumber, attempts] = wordleMatch;
+  gameNumber = gameNumber.replace(/,/g, ''); // Remove commas
 
-    const today = getTodayKey();
-    if (!scores[groupId][today]) scores[groupId][today] = {};
+  // Convert X to 0
+  attempts = attempts.toUpperCase() === 'X' ? 0 : parseInt(attempts);
 
-    // Prevent duplicate
-    if (scores[groupId][today][senderName]) {
-      await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
-      return;
-    }
+  const today = getTodayKey();
+  if (!scores[groupId][today]) scores[groupId][today] = {};
 
-    // Record score
-    scores[groupId][today][senderName] = attempts;
-    saveScores(scores);
-
-    // Show updated current leaderboard immediately
-    const board = getDailyLeaderboard(scores, groupId, today);
-    await msg.reply(board);
+  // Prevent duplicate
+  if (scores[groupId][today][senderName] !== undefined) {
+    await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
+    return;
   }
+
+  // Record score
+  scores[groupId][today][senderName] = attempts;
+  saveScores(scores);
+
+  // Show updated current leaderboard immediately
+  const board = getDailyLeaderboard(scores, groupId, today);
+  await msg.reply(board);
+}
 });
 
 // === START BOT ===
