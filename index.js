@@ -36,7 +36,7 @@ async function initDB() {
   const connector = new Connector();
   const clientOpts = await connector.getOptions({
     instanceConnectionName: INSTANCE_CONNECTION_NAME,
-    ipType: 'PRIVATE', // or 'PUBLIC'
+    ipType: 'PUBLIC', 
   });
 
   db = await mysql.createConnection({
