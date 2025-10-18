@@ -234,7 +234,7 @@ client.on('message', async msg => {
   if (wordleMatch) {
     let [_, gameNumber, attempts] = wordleMatch;
     gameNumber = gameNumber.replace(/,/g, '');
-    let score = attempts.toUpperCase() === 'X' ? -1 : 7 - parseInt(attempts);
+    let score = attempts.toUpperCase() === 'X' ? 0 : 7 - parseInt(attempts);
 
     const today = getTodayKey();
     const [existing] = await db.execute(
