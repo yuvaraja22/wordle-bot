@@ -4,39 +4,51 @@ import qrcode from 'qrcode-terminal';
 import mysql from 'mysql2/promise';
 import axios from 'axios';
 import cron from 'node-cron';
+import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
+import { Connector } from '@google-cloud/cloud-sql-connector';
 
 // === CONFIG ===
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
 const LEETCODE_USER = 'mathanika';
 
-// === CLOUD SQL CONFIG ===
-const dbConfig = {
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER || 'user',
-  password: process.env.DB_PASSWORD,   // pulled from environment variable
-  database: process.env.DB_NAME || 'wordle_bot',
-};
+// === GCP SECRETS LOADING ===
+const secretClient = new SecretManagerServiceClient();
 
-
-// === UTILS ===
-function getParticipantName(p) {
-  return p.notifyName || p.id._serialized || p.id.user.split('@')[0];
-}
-
-// IST date helper
-function getTodayKey() {
-  const now = new Date();
-  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  return istTime.toISOString().split('T')[0];
+async function getSecret(secretName) {
+  const projectId = process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
+  const [version] = await secretClient.accessSecretVersion({
+    name: `projects/${projectId}/secrets/${secretName}/versions/latest`,
+  });
+  return version.payload.data.toString();
 }
 
 // === DB INIT ===
 let db;
-async function initDB() {
-  db = await mysql.createConnection(dbConfig);
 
-  // Current scores table
+async function initDB() {
+  console.log('🔐 Fetching secrets from Secret Manager...');
+  const DB_USER = await getSecret('DB_USER');
+  const DB_PASS = await getSecret('DB_PASS');
+  const DB_NAME = await getSecret('DB_NAME');
+  const INSTANCE_CONNECTION_NAME = await getSecret('INSTANCE_CONNECTION_NAME');
+
+  const connector = new Connector();
+  const clientOpts = await connector.getOptions({
+    instanceConnectionName: INSTANCE_CONNECTION_NAME,
+    ipType: 'PRIVATE', // or 'PUBLIC'
+  });
+
+  db = await mysql.createConnection({
+    ...clientOpts,
+    user: DB_USER,
+    password: DB_PASS,
+    database: DB_NAME,
+  });
+
+  console.log('✅ Connected to Cloud SQL');
+
+  // Create tables
   await db.execute(`
     CREATE TABLE IF NOT EXISTS scores (
       group_id VARCHAR(255),
@@ -46,7 +58,6 @@ async function initDB() {
     )
   `);
 
-  // Archive table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS scores_archive (
       group_id VARCHAR(255),
@@ -56,10 +67,10 @@ async function initDB() {
     )
   `);
 
-  // LeetCode stats table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS leetcode_stats (
       stat_date DATE PRIMARY KEY,
+      username VARCHAR(255),
       total INT,
       easy INT,
       medium INT,
@@ -68,7 +79,18 @@ async function initDB() {
   `);
 }
 
-// === GITHUB STATS ===
+// === UTILS ===
+function getParticipantName(p) {
+  return p.notifyName || p.id._serialized || p.id.user.split('@')[0];
+}
+
+function getTodayKey() {
+  const now = new Date();
+  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  return istTime.toISOString().split('T')[0];
+}
+
+// === LEETCODE STATS ===
 async function getLeetcodeStats(username) {
   try {
     const url = `https://leetcode.com/graphql/`;
@@ -98,7 +120,6 @@ async function getLeetcodeStats(username) {
     const medium = getCount('Medium');
     const hard = getCount('Hard');
 
-    // Load yesterday
     const today = getTodayKey();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -114,7 +135,6 @@ async function getLeetcodeStats(username) {
       total: Math.max(0, totalSolved - prev.total),
     };
 
-    // Save today's stats
     await db.execute(
       `REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -141,7 +161,6 @@ async function getDailyLeaderboard(groupId) {
   );
   if (rows.length === 0) return '📊 No scores submitted today yet!';
 
-  // Sort descending — higher score first
   const sorted = rows.sort((a, b) => b.score - a.score);
   const board = sorted.map((r, i) => `${i + 1}. ${r.player_name}: ${r.score}`).join('\n');
   return `🏆 *Today's Leaderboard (${today})*\n\n${board}`;
@@ -154,41 +173,35 @@ async function getTotalLeaderboard(groupId) {
   );
   if (rows.length === 0) return '📊 No total scores recorded yet.';
 
-  // Sort descending — higher total score first
   const sorted = rows.sort((a, b) => b.total_score - a.total_score);
   const board = sorted.map((r, i) => `${i + 1}. ${r.player_name}: ${r.total_score}`).join('\n');
   return `🏁 *All-Time Leaderboard*\n\n${board}`;
 }
 
-
-// Pending participants
+// === HELPERS ===
 async function getPendingParticipants(chat) {
   const today = getTodayKey();
   const groupId = chat.id._serialized;
-
   const [submittedRows] = await db.execute(`SELECT player_name FROM scores WHERE group_id = ? AND score_date = ?`, [groupId, today]);
   const submittedUsers = submittedRows.map(r => r.player_name);
-
   const allMembers = (await chat.participants).map(getParticipantName).filter(name => name !== BOT_NUMBER);
   return allMembers.filter(name => !submittedUsers.includes(name));
 }
 
-// Archive group scores
 async function archiveGroupScores(groupId) {
   await db.execute(
-    `INSERT INTO scores_archive (group_id, player_name, score_date, score) 
-     SELECT group_id, player_name, score_date, score FROM scores WHERE group_id = ?`, [groupId]
+    `INSERT INTO scores_archive (group_id, player_name, score_date, score)
+     SELECT group_id, player_name, score_date, score FROM scores WHERE group_id = ?`,
+    [groupId]
   );
   await db.execute(`DELETE FROM scores WHERE group_id = ?`, [groupId]);
 }
 
-// === BOT INIT ===
+// === BOT ===
 const client = new Client({ authStrategy: new LocalAuth() });
-
 client.on('qr', qr => qrcode.generate(qr, { small: true }));
 client.on('ready', () => console.log('✅ Wordle Bot ready!'));
 
-// === MESSAGE HANDLER ===
 client.on('message', async msg => {
   const chat = await msg.getChat();
   if (!chat.isGroup) return;
@@ -197,13 +210,11 @@ client.on('message', async msg => {
   const senderName = msg._data.notifyName || msg.author || msg.from;
   const text = msg.body.trim();
 
-  // LeetCode stats for target group
   if (chat.name === TARGET_GROUP_NAME && /^\/minustatus?$/i.test(text)) {
     const stats = await getLeetcodeStats(LEETCODE_USER);
     await msg.reply(stats);
   }
 
-  // Commands
   if (text === '/current') { await msg.reply(await getDailyLeaderboard(groupId)); return; }
   if (text === '/total') { await msg.reply(await getTotalLeaderboard(groupId)); return; }
 
@@ -219,54 +230,47 @@ client.on('message', async msg => {
     return;
   }
 
-  // Handle Wordle submission
-// ===== HANDLE WORDLE RESULTS =====
-// === HANDLE WORDLE RESULTS ===
-const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
-if (wordleMatch) {
-  let [_, gameNumber, attempts] = wordleMatch;
-  gameNumber = gameNumber.replace(/,/g, ''); // Remove commas
+  const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
+  if (wordleMatch) {
+    let [_, gameNumber, attempts] = wordleMatch;
+    gameNumber = gameNumber.replace(/,/g, '');
+    let score = attempts.toUpperCase() === 'X' ? -1 : 7 - parseInt(attempts);
 
-  // Convert X → 7
-  let score = attempts.toUpperCase() === 'X' ? 7 : parseInt(attempts);
+    const today = getTodayKey();
+    const [existing] = await db.execute(
+      `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
+      [groupId, senderName, today]
+    );
 
-  score = 7 - score;
+    if (existing.length > 0) {
+      await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
+      return;
+    }
 
-  const today = getTodayKey();
+    await db.execute(
+      `INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`,
+      [groupId, senderName, today, score]
+    );
 
-  // Check if player already submitted today
-  const [existing] = await db.execute(
-    `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
-    [groupId, senderName, today]
-  );
-
-  if (existing.length > 0) {
-    await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
-    return;
+    await msg.reply(await getDailyLeaderboard(groupId));
   }
-
-  // Insert score
-  await db.execute(
-    `INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`,
-    [groupId, senderName, today, score]
-  );
-
-  // Show updated leaderboard
-  const board = await getDailyLeaderboard(groupId);
-  await msg.reply(board);
-}
 });
 
-// Daily 8PM IST LeetCode stats
-cron.schedule('0 20 * * *', async () => {
-  const chats = await client.getChats();
-  const targetChat = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
-  if (!targetChat) return;
+// === DAILY CRON ===
+cron.schedule(
+  '0 20 * * *',
+  async () => {
+    const chats = await client.getChats();
+    const targetChat = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
+    if (!targetChat) return;
+    const stats = await getLeetcodeStats(LEETCODE_USER);
+    await targetChat.sendMessage(stats);
+    console.log('✅ Daily LeetCode stats sent');
+  },
+  {
+    timezone: 'Asia/Kolkata', // 🕒 Run on IST
+  }
+);
 
-  const stats = await getLeetcodeStats(LEETCODE_USER);
-  await targetChat.sendMessage(stats);
-  console.log('✅ Daily LeetCode stats sent');
-});
-
-// Start DB + Bot
+// === START ===
 (async () => { await initDB(); client.initialize(); })();
