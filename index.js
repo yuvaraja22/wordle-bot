@@ -16,7 +16,7 @@ const LEETCODE_USER = 'mathanika';
 const secretClient = new SecretManagerServiceClient();
 
 async function getSecret(secretName) {
-  const projectId = process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
+  const projectId = await secretClient.getProjectId();;
   const [version] = await secretClient.accessSecretVersion({
     name: `projects/${projectId}/secrets/${secretName}/versions/latest`,
   });
