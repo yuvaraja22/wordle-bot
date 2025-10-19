@@ -152,6 +152,66 @@ async function getCombinedLeaderboard(groupId) {
   return "```\n" + lines.join("\n") + "\n```";
 }
 
+async function getLeetcodeStats(username) {
+  try {
+    const url = `https://leetcode.com/graphql/`;
+    const query = {
+      query: `query getUserProfile($username: String!) {
+        matchedUser(username: $username) {
+          username
+          submitStats {
+            acSubmissionNum {
+              difficulty
+              count
+            }
+          }
+        }
+      }`,
+      variables: { username },
+    };
+
+    const res = await axios.post(url, query, { headers: { 'Content-Type': 'application/json' } });
+    const user = res.data?.data?.matchedUser;
+    if (!user) return `❌ Could not fetch stats for ${username}.`;
+
+    const acArray = user.submitStats.acSubmissionNum || [];
+    const getCount = (diff) => acArray.find(d => d.difficulty === diff)?.count || 0;
+    const totalSolved = getCount('All');
+    const easy = getCount('Easy');
+    const medium = getCount('Medium');
+    const hard = getCount('Hard');
+
+    const today = getTodayKey();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = yesterday.toISOString().split('T')[0];
+
+    const [rows] = await db.execute(`SELECT * FROM leetcode_stats WHERE stat_date = ?`, [yesterdayKey]);
+    const prev = rows[0] || { total: totalSolved, easy, medium, hard };
+
+    const diff = {
+      Easy: Math.max(0, easy - prev.easy),
+      Medium: Math.max(0, medium - prev.medium),
+      Hard: Math.max(0, hard - prev.hard),
+      total: Math.max(0, totalSolved - prev.total),
+    };
+
+    await db.execute(
+      `REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [today, username, totalSolved, easy, medium, hard]
+    );
+
+    let msg = `*LeetCode Stats for ${username}*\n\n`;
+    msg += `Solved Today:\n-> Easy   : *${diff.Easy}*\n-> Medium : *${diff.Medium}*\n-> Hard   : *${diff.Hard}*\n-> Total  : *${diff.total}*\n\n`;
+    msg += `Overall Solved:\n-> Easy   : *${easy}*\n-> Medium : *${medium}*\n-> Hard   : *${hard}*\n-> Total  : *${totalSolved}*`;
+
+    return msg;
+  } catch (err) {
+    console.error(err);
+    return `❌ Error fetching stats for ${username}`;
+  }
+
 // === HELPERS ===
 async function getPendingParticipants(chat) {
   const today = getTodayKey();
