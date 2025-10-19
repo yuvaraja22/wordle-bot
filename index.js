@@ -210,13 +210,13 @@ async function getLeetcodeStats(username) {
     // return "```\n" + msg + "\n```";
 
     let msg = `LeetCode Stats for ${username}\n\n`;
-    msg += `           Solved Today        |     Overall Solved\n`;
-    msg += `-----------------------------------------------\n`;
-    msg += `Easy   : ${String(diff.Easy).padEnd(5)}          |  ${easy}\n`;
-    msg += `Medium : ${String(diff.Medium).padEnd(5)}        |  ${medium}\n`;
-    msg += `Hard   : ${String(diff.Hard).padEnd(5)}          |  ${hard}\n`;
-    msg += `Total  : ${String(diff.total).padEnd(5)}         |  ${totalSolved}`;
-
+    msg += `Solved Today |  Overall Solved\n`;
+    msg += `------------------------------\n`;
+    msg += `Easy   : ${diff.Easy}   |  ${easy}\n`;
+    msg += `Medium : ${diff.Medium}   |  ${medium}\n`;
+    msg += `Hard   : ${diff.Hard}   |  ${hard}\n`;
+    msg += `Total  : ${diff.total}   |  ${totalSolved}`;
+    
     return "```\n" + msg + "\n```";
   } catch (err) {
     console.error(err);
