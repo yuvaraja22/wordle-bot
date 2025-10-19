@@ -146,7 +146,7 @@ async function getCombinedLeaderboard(groupId) {
     const right = todayList[i]
       ? `${String(i + 1).padStart(2)}. ${formatName(todayList[i].player_name)} ${String(todayList[i].total_score).padStart(2)}`
       : "";
-    lines.push(`${left}  |   ${right}`);
+    lines.push(`${left}   |   ${right}  `);
   }
 
   return "```\n" + lines.join("\n") + "\n```";
