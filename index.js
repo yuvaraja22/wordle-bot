@@ -138,7 +138,7 @@ async function getCombinedLeaderboard(groupId) {
   const maxLen = Math.max(allTime.length, todayList.length);
 
   let lines = [];
-  lines.push("🏆 All-Time  |   🎖️ Today");
+  lines.push("🏆 All-Time   |   🎖️ Today");
   for (let i = 0; i < maxLen; i++) {
     const left = allTime[i]
       ? `${String(i + 1).padStart(2)}. ${formatName(allTime[i].player_name)} ${String(allTime[i].total_score).padStart(2)}`
