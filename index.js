@@ -211,6 +211,7 @@ async function getLeetcodeStats(username) {
     console.error(err);
     return `❌ Error fetching stats for ${username}`;
   }
+}
 
 // === HELPERS ===
 async function getPendingParticipants(chat) {
