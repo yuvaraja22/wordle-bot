@@ -207,7 +207,7 @@ async function getLeetcodeStats(username) {
     msg += `Solved Today:\n-> Easy   : *${diff.Easy}*\n-> Medium : *${diff.Medium}*\n-> Hard   : *${diff.Hard}*\n-> Total  : *${diff.total}*\n\n`;
     msg += `Overall Solved:\n-> Easy   : *${easy}*\n-> Medium : *${medium}*\n-> Hard   : *${hard}*\n-> Total  : *${totalSolved}*`;
 
-    return msg;
+    return "```\n" + msg + "\n```";
   } catch (err) {
     console.error(err);
     return `❌ Error fetching stats for ${username}`;
