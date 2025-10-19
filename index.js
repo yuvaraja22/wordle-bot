@@ -83,19 +83,13 @@ function getParticipantName(p) {
   return p.notifyName || p.id._serialized || p.id.user.split('@')[0];
 }
 
-function getTodayKey() {
-  const now = new Date();
-  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  return istTime.toISOString().split('T')[0];
-}
-
 function formatName(name) {
   return name.trim().substring(0, 4).padEnd(4);
 }
 
 // === LEADERBOARDS ===
 async function getDailyLeaderboard(groupId) {
-  const today = getTodayKey();
+  const today = getISTDateKey(0);
   const [rows] = await db.execute(
     `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`,
     [groupId, today]
@@ -121,7 +115,7 @@ async function getTotalLeaderboard(groupId) {
 
 // === COMBINED LEADERBOARD ===
 async function getCombinedLeaderboard(groupId) {
-  const today = getTodayKey();
+  const today = getISTDateKey(0);
 
   const [allRows] = await db.execute(
     `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`,
@@ -150,6 +144,15 @@ async function getCombinedLeaderboard(groupId) {
   }
 
   return "```\n" + lines.join("\n") + "\n```";
+}
+
+// Helper to get IST date string (YYYY-MM-DD)
+function getISTDateKey(offsetDays = 0) {
+  const now = new Date();
+  // convert to IST (+5:30)
+  const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  istTime.setDate(istTime.getDate() + offsetDays);
+  return istTime.toISOString().split('T')[0];
 }
 
 async function getLeetcodeStats(username) {
@@ -181,10 +184,8 @@ async function getLeetcodeStats(username) {
     const medium = getCount('Medium');
     const hard = getCount('Hard');
 
-    const today = getTodayKey();
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayKey = yesterday.toISOString().split('T')[0];
+    const today = getISTDateKey(0);
+    const yesterdayKey = getISTDateKey(-1);
 
     const [rows] = await db.execute(`SELECT * FROM leetcode_stats WHERE stat_date = ?`, [yesterdayKey]);
     const prev = rows[0] || { total: totalSolved, easy, medium, hard };
@@ -215,7 +216,7 @@ async function getLeetcodeStats(username) {
 
 // === HELPERS ===
 async function getPendingParticipants(chat) {
-  const today = getTodayKey();
+  const today = getISTDateKey(0);
   const groupId = chat.id._serialized;
   const [submittedRows] = await db.execute(
     `SELECT player_name FROM scores WHERE group_id = ? AND score_date = ?`,
@@ -291,7 +292,7 @@ client.on('message', async msg => {
     gameNumber = gameNumber.replace(/,/g, '');
     let score = attempts.toUpperCase() === 'X' ? 0 : 7 - parseInt(attempts);
 
-    const today = getTodayKey();
+    const today = getISTDateKey(0);
     const [existing] = await db.execute(
       `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
       [groupId, senderName, today]
