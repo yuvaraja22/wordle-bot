@@ -132,7 +132,7 @@ async function getCombinedLeaderboard(groupId) {
   const maxLen = Math.max(allTime.length, todayList.length);
 
   let lines = [];
-  lines.push("🏆 All-Time   |   🎖️ Today");
+  lines.push("🏆 All-Time  |  🎖️ Today");
   lines.push("-----------------------------");
   for (let i = 0; i < maxLen; i++) {
     const left = allTime[i]
@@ -141,7 +141,7 @@ async function getCombinedLeaderboard(groupId) {
     const right = todayList[i]
       ? `${String(i + 1).padStart(2)}. ${formatName(todayList[i].player_name)} ${String(todayList[i].total_score).padStart(2)}`
       : "";
-    lines.push(`${left}   |   ${right}  `);
+    lines.push(`${left}  |  ${right}`);
   }
 
   return "```\n" + lines.join("\n") + "\n```";
