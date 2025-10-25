@@ -23,6 +23,16 @@ async function getSecret(secretName) {
   return version.payload.data.toString();
 }
 
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  process.exit(1); // Forces PM2 to restart
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection:', reason);
+  process.exit(1);
+});
+
 // === DB INIT ===
 let db;
 
