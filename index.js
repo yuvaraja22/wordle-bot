@@ -275,6 +275,17 @@ client.on('message', async msg => {
     await msg.reply(stats);
   }
 
+  if (/^\/status\s+/i.test(text)) {
+    const username = text.split(' ')[1]?.trim();
+    if (!username) {
+      await msg.reply('❌ Please provide a username.\nExample: `/status yuva`');
+      return;
+    }
+    const stats = await getLeetcodeStats(username);
+    await msg.reply(stats);
+    return;
+  }
+
   if (text === '/current') {
     await msg.reply(await getDailyLeaderboard(groupId));
     return;
