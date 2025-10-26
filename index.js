@@ -166,6 +166,87 @@ function getISTDateKey(offsetDays = 0) {
   return istTime.toISOString().split('T')[0];
 }
 
+// === OVERALL PROGRESS (API + DB MIX) ===
+async function getOverallLeetcodeProgress(username) {
+  try {
+    // Step 1: Fetch oldest record from DB
+    const [oldRows] = await db.execute(
+      `SELECT * FROM leetcode_stats WHERE username = ? ORDER BY stat_date ASC LIMIT 1`,
+      [username]
+    );
+    const oldest = oldRows[0];
+
+    // Step 2: Fetch latest stats directly from LeetCode API (not DB)
+    const url = `https://leetcode.com/graphql/`;
+    const query = {
+      query: `query getUserProfile($username: String!) {
+        matchedUser(username: $username) {
+          username
+          submitStats {
+            acSubmissionNum {
+              difficulty
+              count
+            }
+          }
+        }
+      }`,
+      variables: { username },
+    };
+
+    const res = await axios.post(url, query, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const user = res.data?.data?.matchedUser;
+    if (!user) return `❌ Could not fetch stats for ${username}.`;
+
+    const acArray = user.submitStats.acSubmissionNum || [];
+    const getCount = (diff) => acArray.find((d) => d.difficulty === diff)?.count || 0;
+
+    const latest = {
+      total: getCount('All'),
+      easy: getCount('Easy'),
+      medium: getCount('Medium'),
+      hard: getCount('Hard'),
+    };
+
+    // Step 3: If no oldest record exists, save current stats as baseline
+    if (!oldest) {
+      const today = getISTDateKey(0);
+      await db.execute(
+        `INSERT INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [today, username, latest.total, latest.easy, latest.medium, latest.hard]
+      );
+      oldest = latest;
+    }
+
+    // Step 4: Compute difference
+    const diff = {
+      Easy: Math.max(0, latest.easy - oldest.easy),
+      Medium: Math.max(0, latest.medium - oldest.medium),
+      Hard: Math.max(0, latest.hard - oldest.hard),
+      total: Math.max(0, latest.total - oldest.total),
+    };
+
+    // Step 5: Format message
+    let msg = `📈 LeetCode Progress for ${username}\n`;
+    msg += `Since: ${oldest.stat_date}\n\n`;
+    msg += `Solved | Total Solved\n`;
+    msg += `----------------------\n`;
+    msg += `Easy   : ${diff.Easy} | ${latest.easy}\n`;
+    msg += `Medium : ${diff.Medium} | ${latest.medium}\n`;
+    msg += `Hard   : ${diff.Hard} | ${latest.hard}\n`;
+    msg += `Total  : ${diff.total} | ${latest.total}`;
+
+    return "```\n" + msg + "\n```";
+  } catch (err) {
+    console.error(err);
+    return `❌ Error fetching overall progress for ${username}`;
+  }
+}
+
+
 async function getLeetcodeStats(username) {
   try {
     const url = `https://leetcode.com/graphql/`;
