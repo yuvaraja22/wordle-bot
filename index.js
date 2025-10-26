@@ -31,7 +31,7 @@ async function initDB() {
   console.log('📦 Initializing SQLite database...');
   
   db = await open({
-    filename: './bot.db', // Connects to the file created by migr.js
+    filename: '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db', 
     driver: sqlite3.Database
   });
 
