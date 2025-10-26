@@ -362,7 +362,7 @@ client.on('message', async msg => {
       await msg.reply('❌ Please provide a username.\nExample: `/status yuva`');
       return;
     }
-    const stats = await getLeetcodeStats(username);
+    const stats = await getOverallLeetcodeProgress(username);
     await msg.reply(stats);
     return;
   }
