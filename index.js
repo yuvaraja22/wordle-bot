@@ -229,15 +229,20 @@ async function getOverallLeetcodeProgress(username) {
       total: Math.max(0, latest.total - oldest.total),
     };
 
+    const sinceDate = new Date(oldest.stat_date);
+    const formattedDate = sinceDate.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: '2-digit'
+    });
     // Step 5: Format message
     let msg = `📈 LeetCode Progress for ${username}\n`;
-    msg += `Since: ${oldest.stat_date}\n\n`;
-    msg += `Solved | Total Solved\n`;
-    msg += `----------------------\n`;
-    msg += `Easy   : ${diff.Easy} | ${latest.easy}\n`;
-    msg += `Medium : ${diff.Medium} | ${latest.medium}\n`;
-    msg += `Hard   : ${diff.Hard} | ${latest.hard}\n`;
-    msg += `Total  : ${diff.total} | ${latest.total}`;
+    msg += `Solved since: ${formattedDate}\n`;
+    msg += `-----------\n`;
+    msg += `Easy   : ${diff.Easy}\n`;
+    msg += `Medium : ${diff.Medium}\n`;
+    msg += `Hard   : ${diff.Hard}\n`;
+    msg += `Total  : ${diff.total}`;
 
     return "```\n" + msg + "\n```";
   } catch (err) {
