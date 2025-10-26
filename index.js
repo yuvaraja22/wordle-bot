@@ -1,28 +1,19 @@
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
-import mysql from 'mysql2/promise';
 import axios from 'axios';
 import cron from 'node-cron';
-import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
-import { Connector } from '@google-cloud/cloud-sql-connector';
+
+// === New SQLite Imports ===
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
 
 // === CONFIG ===
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
 const LEETCODE_USER = 'mathanika';
 
-// === GCP SECRETS LOADING ===
-const secretClient = new SecretManagerServiceClient();
-
-async function getSecret(secretName) {
-  const projectId = await secretClient.getProjectId();
-  const [version] = await secretClient.accessSecretVersion({
-    name: `projects/${projectId}/secrets/${secretName}/versions/latest`,
-  });
-  return version.payload.data.toString();
-}
-
+// === Error Handling (Kept for PM2 restarts) ===
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
   process.exit(1); // Forces PM2 to restart
@@ -33,57 +24,48 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-// === DB INIT ===
+// === DB INIT (Refactored for SQLite) ===
 let db;
 
 async function initDB() {
-  console.log('🔐 Fetching secrets from Secret Manager...');
-  const DB_USER = await getSecret('DB_USER');
-  const DB_PASS = await getSecret('DB_PASS');
-  const DB_NAME = await getSecret('DB_NAME');
-  const INSTANCE_CONNECTION_NAME = await getSecret('INSTANCE_CONNECTION_NAME');
-
-  const connector = new Connector();
-  const clientOpts = await connector.getOptions({
-    instanceConnectionName: INSTANCE_CONNECTION_NAME,
-    ipType: 'PUBLIC',
+  console.log('📦 Initializing SQLite database...');
+  
+  db = await open({
+    filename: './bot.db', // Connects to the file created by migr.js
+    driver: sqlite3.Database
   });
 
-  db = await mysql.createConnection({
-    ...clientOpts,
-    user: DB_USER,
-    password: DB_PASS,
-    database: DB_NAME,
-  });
+  console.log('✅ Connected to SQLite database (bot.db)');
 
-  console.log('✅ Connected to Cloud SQL');
-
-  await db.execute(`
+  // Note: All db.execute changed to db.run
+  await db.run(`
     CREATE TABLE IF NOT EXISTS scores (
-      group_id VARCHAR(255),
-      player_name VARCHAR(255),
+      group_id TEXT,
+      player_name TEXT,
       score_date DATE,
       score INT
     )
   `);
 
-  await db.execute(`
+  await db.run(`
     CREATE TABLE IF NOT EXISTS scores_archive (
-      group_id VARCHAR(255),
-      player_name VARCHAR(255),
+      group_id TEXT,
+      player_name TEXT,
       score_date DATE,
       score INT
     )
   `);
 
-  await db.execute(`
+  // FIXED: Changed PRIMARY KEY to be composite (stat_date, username)
+  await db.run(`
     CREATE TABLE IF NOT EXISTS leetcode_stats (
-      stat_date DATE PRIMARY KEY,
-      username VARCHAR(255),
+      stat_date DATE,
+      username TEXT,
       total INT,
       easy INT,
       medium INT,
-      hard INT
+      hard INT,
+      PRIMARY KEY (stat_date, username) 
     )
   `);
 }
@@ -97,10 +79,21 @@ function formatName(name) {
   return name.trim().substring(0, 4).padEnd(4);
 }
 
+// Helper to get IST date string (YYYY-MM-DD)
+function getISTDateKey(offsetDays = 0) {
+  const now = new Date();
+  // convert to IST (+5:30)
+  const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  istTime.setDate(istTime.getDate() + offsetDays);
+  return istTime.toISOString().split('T')[0];
+}
+
+
 // === LEADERBOARDS ===
 async function getDailyLeaderboard(groupId) {
   const today = getISTDateKey(0);
-  const [rows] = await db.execute(
+  // db.execute changed to db.all
+  const rows = await db.all(
     `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`,
     [groupId, today]
   );
@@ -112,7 +105,8 @@ async function getDailyLeaderboard(groupId) {
 }
 
 async function getTotalLeaderboard(groupId) {
-  const [rows] = await db.execute(
+  // db.execute changed to db.all
+  const rows = await db.all(
     `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`,
     [groupId]
   );
@@ -127,12 +121,14 @@ async function getTotalLeaderboard(groupId) {
 async function getCombinedLeaderboard(groupId) {
   const today = getISTDateKey(0);
 
-  const [allRows] = await db.execute(
+  // db.execute changed to db.all
+  const allRows = await db.all(
     `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`,
     [groupId]
   );
 
-  const [todayRows] = await db.execute(
+  // db.execute changed to db.all
+  const todayRows = await db.all(
     `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`,
     [groupId, today]
   );
@@ -142,7 +138,7 @@ async function getCombinedLeaderboard(groupId) {
   const maxLen = Math.max(allTime.length, todayList.length);
 
   let lines = [];
-  lines.push("🏆 All-Time  |  🎖️ Today");
+  lines.push("🏆 All-Time  |  🎖️ Today");
   lines.push("-----------------------------");
   for (let i = 0; i < maxLen; i++) {
     const left = allTime[i]
@@ -151,32 +147,24 @@ async function getCombinedLeaderboard(groupId) {
     const right = todayList[i]
       ? `${String(i + 1).padStart(2)}. ${formatName(todayList[i].player_name)} ${String(todayList[i].total_score).padStart(2)}`
       : "";
-    lines.push(`${left}  |  ${right}`);
+    lines.push(`${left}  |  ${right}`);
   }
 
   return "```\n" + lines.join("\n") + "\n```";
 }
 
-// Helper to get IST date string (YYYY-MM-DD)
-function getISTDateKey(offsetDays = 0) {
-  const now = new Date();
-  // convert to IST (+5:30)
-  const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
-  istTime.setDate(istTime.getDate() + offsetDays);
-  return istTime.toISOString().split('T')[0];
-}
 
 // === OVERALL PROGRESS (API + DB MIX) ===
 async function getOverallLeetcodeProgress(username) {
   try {
-    // Step 1: Fetch oldest record from DB
-    const [oldRows] = await db.execute(
+    // Step 1: Fetch oldest record from DB (db.execute changed to db.get)
+    // ORDER BY ASC LIMIT 1 is sufficient for db.get
+    const oldest = await db.get(
       `SELECT * FROM leetcode_stats WHERE username = ? ORDER BY stat_date ASC LIMIT 1`,
       [username]
     );
-    const oldest = oldRows[0];
 
-    // Step 2: Fetch latest stats directly from LeetCode API (not DB)
+    // Step 2: Fetch latest stats directly from LeetCode API
     const url = `https://leetcode.com/graphql/`;
     const query = {
       query: `query getUserProfile($username: String!) {
@@ -213,12 +201,36 @@ async function getOverallLeetcodeProgress(username) {
     // Step 3: If no oldest record exists, save current stats as baseline
     if (!oldest) {
       const today = getISTDateKey(0);
-      await db.execute(
+      // db.execute changed to db.run
+      await db.run(
         `INSERT INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [today, username, latest.total, latest.easy, latest.medium, latest.hard]
       );
-      oldest = latest;
+      // Create a mock oldest object from latest for diff calculation
+      const initialOldest = { ...latest, stat_date: today };
+      
+      // Compute difference based on initial baseline (will be 0, but provides a date)
+      const diff = {
+        Easy: 0, Medium: 0, Hard: 0, total: 0
+      };
+      
+      // Use the formatted date from the initial record
+      const formattedDate = new Date(initialOldest.stat_date).toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: '2-digit',
+          year: '2-digit'
+      });
+      
+      let msg = `📈 LeetCode Progress for ${username}\n`;
+      msg += `Solved since: ${formattedDate} (Initial Baseline)\n`;
+      msg += `-----------\n`;
+      msg += `Easy   : ${diff.Easy}\n`;
+      msg += `Medium : ${diff.Medium}\n`;
+      msg += `Hard   : ${diff.Hard}\n`;
+      msg += `Total  : ${diff.total}`;
+      
+      return "```\n" + msg + "\n```";
     }
 
     // Step 4: Compute difference
@@ -239,10 +251,10 @@ async function getOverallLeetcodeProgress(username) {
     let msg = `📈 LeetCode Progress for ${username}\n`;
     msg += `Solved since: ${formattedDate}\n`;
     msg += `-----------\n`;
-    msg += `Easy   : ${diff.Easy}\n`;
+    msg += `Easy   : ${diff.Easy}\n`;
     msg += `Medium : ${diff.Medium}\n`;
-    msg += `Hard   : ${diff.Hard}\n`;
-    msg += `Total  : ${diff.total}`;
+    msg += `Hard   : ${diff.Hard}\n`;
+    msg += `Total  : ${diff.total}`;
 
     return "```\n" + msg + "\n```";
   } catch (err) {
@@ -284,35 +296,31 @@ async function getLeetcodeStats(username) {
     const today = getISTDateKey(0);
     const yesterdayKey = getISTDateKey(-1);
 
-    const [rows] = await db.execute(`SELECT * FROM leetcode_stats WHERE stat_date = ? and username = ?`, [yesterdayKey, username]);
-    const prev = rows[0] || { total: totalSolved, easy, medium, hard };
+    // db.execute changed to db.get
+    const prev = await db.get(`SELECT * FROM leetcode_stats WHERE stat_date = ? and username = ?`, [yesterdayKey, username]);
+    const prevStats = prev || { total: totalSolved, easy, medium, hard };
 
     const diff = {
-      Easy: Math.max(0, easy - prev.easy),
-      Medium: Math.max(0, medium - prev.medium),
-      Hard: Math.max(0, hard - prev.hard),
-      total: Math.max(0, totalSolved - prev.total),
+      Easy: Math.max(0, easy - prevStats.easy),
+      Medium: Math.max(0, medium - prevStats.medium),
+      Hard: Math.max(0, hard - prevStats.hard),
+      total: Math.max(0, totalSolved - prevStats.total),
     };
 
-    await db.execute(
+    // db.execute changed to db.run
+    await db.run(
       `REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [today, username, totalSolved, easy, medium, hard]
     );
 
-    // let msg = `LeetCode Stats for ${username}\n\n`;
-    // msg += `Solved Today:\n-> Easy   : ${diff.Easy}\n-> Medium : ${diff.Medium}\n-> Hard   : ${diff.Hard}\n-> Total  : ${diff.total}\n\n`;
-    // msg += `Overall Solved:\n-> Easy   : ${easy}\n-> Medium : ${medium}\n-> Hard   : ${hard}\n-> Total  : ${totalSolved}`;
-
-    // return "```\n" + msg + "\n```";
-
     let msg = `LeetCode Stats for ${username}\n\n`;
-    msg += `Solved Today |  Overall Solved\n`;
+    msg += `Solved Today |  Overall Solved\n`;
     msg += `------------------------------\n`;
-    msg += `Easy   : ${diff.Easy}   |  ${easy}\n`;
-    msg += `Medium : ${diff.Medium}   |  ${medium}\n`;
-    msg += `Hard   : ${diff.Hard}   |  ${hard}\n`;
-    msg += `Total  : ${diff.total}   |  ${totalSolved}`;
+    msg += `Easy   : ${diff.Easy}   |  ${easy}\n`;
+    msg += `Medium : ${diff.Medium}   |  ${medium}\n`;
+    msg += `Hard   : ${diff.Hard}   |  ${hard}\n`;
+    msg += `Total  : ${diff.total}   |  ${totalSolved}`;
     
     return "```\n" + msg + "\n```";
   } catch (err) {
@@ -325,7 +333,8 @@ async function getLeetcodeStats(username) {
 async function getPendingParticipants(chat) {
   const today = getISTDateKey(0);
   const groupId = chat.id._serialized;
-  const [submittedRows] = await db.execute(
+  // db.execute changed to db.all
+  const submittedRows = await db.all(
     `SELECT player_name FROM scores WHERE group_id = ? AND score_date = ?`,
     [groupId, today]
   );
@@ -335,12 +344,14 @@ async function getPendingParticipants(chat) {
 }
 
 async function archiveGroupScores(groupId) {
-  await db.execute(
+  // db.execute changed to db.run
+  await db.run(
     `INSERT INTO scores_archive (group_id, player_name, score_date, score)
      SELECT group_id, player_name, score_date, score FROM scores WHERE group_id = ?`,
     [groupId]
   );
-  await db.execute(`DELETE FROM scores WHERE group_id = ?`, [groupId]);
+  // db.execute changed to db.run
+  await db.run(`DELETE FROM scores WHERE group_id = ?`, [groupId]);
 }
 
 // === BOT ===
@@ -411,17 +422,20 @@ client.on('message', async msg => {
     let score = attempts.toUpperCase() === 'X' ? 0 : 7 - parseInt(attempts);
 
     const today = getISTDateKey(0);
-    const [existing] = await db.execute(
+    // db.execute changed to db.get
+    const existing = await db.get(
       `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
       [groupId, senderName, today]
     );
 
-    if (existing.length > 0) {
+    // existing.length > 0 changed to if (existing)
+    if (existing) {
       await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
       return;
     }
 
-    await db.execute(
+    // db.execute changed to db.run
+    await db.run(
       `INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`,
       [groupId, senderName, today, score]
     );
