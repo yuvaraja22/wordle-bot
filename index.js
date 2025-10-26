@@ -198,7 +198,7 @@ async function getLeetcodeStats(username) {
     const today = getISTDateKey(0);
     const yesterdayKey = getISTDateKey(-1);
 
-    const [rows] = await db.execute(`SELECT * FROM leetcode_stats WHERE stat_date = ?`, [yesterdayKey]);
+    const [rows] = await db.execute(`SELECT * FROM leetcode_stats WHERE stat_date = ? and username = ?`, [yesterdayKey], [username]);
     const prev = rows[0] || { total: totalSolved, easy, medium, hard };
 
     const diff = {
