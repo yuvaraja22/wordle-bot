@@ -31,7 +31,7 @@ PM2 COMMANDS
 To register initially
 pm2 start index.js --name wordle-bot
 
-To monitor the bot
+To monitor the bot\n
 pm2 show or pm2 list
 
 To start the bot
