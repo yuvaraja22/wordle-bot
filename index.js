@@ -329,6 +329,14 @@ async function getLeetcodeStats(username) {
   }
 }
 
+// Convert Wordle number → date
+function getDateFromWordleNumber(wordleNum) {
+  const startDate = new Date(Date.UTC(2021, 5, 19)); // Wordle #1 = 2021-06-19 UTC
+  const targetDateUTC = new Date(startDate.getTime() + (wordleNum - 1) * 24 * 60 * 60 * 1000);
+  const targetIST = new Date(targetDateUTC.getTime() + (5.5 * 60 * 60 * 1000));
+  return targetIST.toISOString().split('T')[0];
+}
+
 // === HELPERS ===
 async function getPendingParticipants(chat) {
   const today = getISTDateKey(0);
@@ -421,23 +429,25 @@ client.on('message', async msg => {
     gameNumber = gameNumber.replace(/,/g, '');
     let score = attempts.toUpperCase() === 'X' ? 0 : 7 - parseInt(attempts);
 
-    const today = getISTDateKey(0);
+    const wordleDate = getDateFromWordleNumber(parseInt(gameNumber));
+
+    // const today = getISTDateKey(0);
     // db.execute changed to db.get
     const existing = await db.get(
       `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
-      [groupId, senderName, today]
+      [groupId, senderName, wordleDate]
     );
 
     // existing.length > 0 changed to if (existing)
     if (existing) {
-      await msg.reply(`⚠️ ${senderName}, you've already submitted today's score.`);
+      await msg.reply(`⚠️ ${senderName}, you've already submitted for Wordle #${gameNumber} (${wordleDate}).`);
       return;
     }
 
     // db.execute changed to db.run
     await db.run(
       `INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`,
-      [groupId, senderName, today, score]
+      [groupId, senderName, wordleDate, score]
     );
 
     const leaderboardMsg = await getCombinedLeaderboard(groupId);
