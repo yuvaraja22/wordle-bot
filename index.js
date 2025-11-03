@@ -329,11 +329,16 @@ async function getLeetcodeStats(username) {
   }
 }
 
-// Convert Wordle number → date
 function getDateFromWordleNumber(wordleNum) {
-  const startDate = new Date(Date.UTC(2021, 5, 19)); // Wordle #1 = 2021-06-19 UTC
-  const targetDateUTC = new Date(startDate.getTime() + (wordleNum - 1) * 24 * 60 * 60 * 1000);
-  const targetIST = new Date(targetDateUTC.getTime() + (5.5 * 60 * 60 * 1000));
+  // Wordle #1 = 2021-06-19 UTC
+  const startUTC = new Date(Date.UTC(2021, 5, 19, 0, 0, 0)); // months are 0-indexed
+  // target in UTC
+  const targetUTC = new Date(startUTC.getTime() + (wordleNum - 1) * 24 * 60 * 60 * 1000);
+  // convert UTC -> IST by adding 5.5 hours (5*60 + 30 minutes)
+  const istOffsetMs = (5 * 60 + 30) * 60 * 1000;
+  const targetIST = new Date(targetUTC.getTime() + istOffsetMs);
+
+  // return YYYY-MM-DD
   return targetIST.toISOString().split('T')[0];
 }
 
