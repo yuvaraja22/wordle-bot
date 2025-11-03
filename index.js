@@ -330,16 +330,18 @@ async function getLeetcodeStats(username) {
 }
 
 function getDateFromWordleNumber(wordleNum) {
-  // Wordle #1 = 2021-06-19 UTC
-  const startUTC = new Date(Date.UTC(2021, 5, 19, 0, 0, 0)); // months are 0-indexed
-  // target in UTC
-  const targetUTC = new Date(startUTC.getTime() + (wordleNum - 1) * 24 * 60 * 60 * 1000);
-  // convert UTC -> IST by adding 5.5 hours (5*60 + 30 minutes)
-  const istOffsetMs = (5 * 60 + 30) * 60 * 1000;
-  const targetIST = new Date(targetUTC.getTime() + istOffsetMs);
+  const anchorWordle = 1598;
+  const anchorDateStr = '2025-11-03'; // YYYY-MM-DD for anchorWordle
 
-  // return YYYY-MM-DD
-  return targetIST.toISOString().split('T')[0];
+  const [ay, am, ad] = anchorDateStr.split('-').map(n => parseInt(n, 10));
+  // Use UTC midnight for stable day arithmetic (no timezone conversions)
+  const anchorMs = Date.UTC(ay, am - 1, ad);
+
+  const deltaDays = wordleNum - anchorWordle;
+  const targetMs = anchorMs + deltaDays * 24 * 60 * 60 * 1000;
+
+  const target = new Date(targetMs);
+  return target.toISOString().slice(0, 10); // "YYYY-MM-DD"
 }
 
 // === HELPERS ===
