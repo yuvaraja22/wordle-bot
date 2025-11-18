@@ -1,4 +1,3 @@
-import path from 'path';
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
@@ -8,6 +7,7 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
+import path from 'path';
 
 // === CONFIG ===
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
@@ -17,10 +17,10 @@ const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
 
 // === SIMPLE TIMESTAMPED LOGGER ===
 const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
-const CURRENT_LEVEL = process.env.LOG_LEVEL ? LOG_LEVELS[process.env.LOG_LEVEL] : LOG_LEVELS.DEBUG;
+const CURRENT_LEVEL = process.env.LOG_LEVEL ? LOG_LEVELS[process.env.LOG_LEVEL] ?? LOG_LEVELS.DEBUG : LOG_LEVELS.DEBUG;
 function log(level, ...args) {
-  const lvl = level.toUpperCase();
-  if (LOG_LEVELS[lvl] < CURRENT_LEVEL) return;
+  const lvl = String(level).toUpperCase();
+  if ((LOG_LEVELS[lvl] ?? 0) < CURRENT_LEVEL) return;
   const ts = new Date().toISOString();
   const prefix = `${ts} ${lvl}`;
   if (lvl === 'ERROR') console.error(prefix, ...args);
@@ -30,11 +30,10 @@ function log(level, ...args) {
 
 process.on('uncaughtException', (err) => {
   log('ERROR', 'Uncaught Exception:', err && err.stack ? err.stack : err);
-  // Graceful shutdown — keep behaviour same for PM2 automatic restart
   process.exit(1);
 });
-process.on('unhandledRejection', (reason, promise) => {
-  log('ERROR', 'Unhandled Rejection:', reason);
+process.on('unhandledRejection', (reason) => {
+  log('ERROR', 'Unhandled Rejection:', reason && reason.stack ? reason.stack : reason);
   process.exit(1);
 });
 process.on('exit', (code) => log('INFO', `Process exiting with code ${code}`));
@@ -44,13 +43,13 @@ let db;
 async function ensureDbFileAccessible(pathToFile) {
   try {
     await fsPromises.mkdir(path.dirname(pathToFile), { recursive: true });
-    // Try opening with read/write flags
+    // Try opening with read/write flags (creates file if missing)
     const fh = await fsPromises.open(pathToFile, 'a+');
     await fh.close();
     await fsPromises.access(pathToFile, fs.constants.R_OK | fs.constants.W_OK);
     log('INFO', `DB file verified and accessible at ${pathToFile}`);
   } catch (err) {
-    log('ERROR', `DB file not accessible at ${pathToFile}:`, err);
+    log('ERROR', `DB file not accessible at ${pathToFile}:`, err && err.stack ? err.stack : err);
     throw err;
   }
 }
@@ -67,7 +66,6 @@ async function initDB() {
     await db.run(`CREATE TABLE IF NOT EXISTS scores_archive (group_id TEXT, player_name TEXT, score_date DATE, score INT)`);
     await db.run(`CREATE TABLE IF NOT EXISTS leetcode_stats (stat_date DATE, username TEXT, total INT, easy INT, medium INT, hard INT, PRIMARY KEY (stat_date, username))`);
 
-    // Verify tables exist (quick sanity check)
     const tables = await db.all(`SELECT name FROM sqlite_master WHERE type='table'`);
     log('DEBUG', 'SQLite tables present:', tables.map(t => t.name));
   } catch (err) {
@@ -78,10 +76,11 @@ async function initDB() {
 
 // === UTILS ===
 function getParticipantName(p) {
-  return p.notifyName || p.id._serialized || (p.id && p.id.user ? p.id.user.split('@')[0] : 'unknown');
+  try { return p.notifyName || p.id._serialized || (p.id && p.id.user ? p.id.user.split('@')[0] : 'unknown'); }
+  catch (e) { return 'unknown'; }
 }
 function formatName(name) {
-  return name.trim().substring(0, 4).padEnd(4);
+  return String(name || '').trim().substring(0, 4).padEnd(4);
 }
 function getISTDateKey(offsetDays = 0) {
   const now = new Date();
@@ -112,7 +111,7 @@ async function getDailyLeaderboard(groupId) {
     const board = sorted.map((r, i) => `${i + 1}. ${r.player_name} ${r.total_score}`).join('\n');
     return `🏆 *Today's Leaderboard (${today})*\n\n${board}`;
   } catch (err) {
-    log('ERROR', 'getDailyLeaderboard failed:', err);
+    log('ERROR', 'getDailyLeaderboard failed:', err && err.stack ? err.stack : err);
     return '❌ Error fetching leaderboard';
   }
 }
@@ -126,7 +125,7 @@ async function getTotalLeaderboard(groupId) {
     const board = sorted.map((r, i) => `${i + 1}. ${r.player_name} ${r.total_score}`).join('\n');
     return `🏁 *All-Time Leaderboard*\n\n${board}`;
   } catch (err) {
-    log('ERROR', 'getTotalLeaderboard failed:', err);
+    log('ERROR', 'getTotalLeaderboard failed:', err && err.stack ? err.stack : err);
     return '❌ Error fetching leaderboard';
   }
 }
@@ -152,8 +151,57 @@ async function getCombinedLeaderboard(groupId) {
 
     return "```\n" + lines.join('\n') + "\n```";
   } catch (err) {
-    log('ERROR', 'getCombinedLeaderboard failed:', err);
+    log('ERROR', 'getCombinedLeaderboard failed:', err && err.stack ? err.stack : err);
     return '❌ Error building leaderboard';
+  }
+}
+
+async function getOverallLeetcodeProgress(username) {
+  try {
+    const oldest = await db.get(`SELECT * FROM leetcode_stats WHERE username = ? ORDER BY stat_date ASC LIMIT 1`, [username]);
+
+    const url = `https://leetcode.com/graphql/`;
+    const query = {
+      query: `query getUserProfile($username: String!) { matchedUser(username: $username) { username submitStats { acSubmissionNum { difficulty count } } } }`,
+      variables: { username },
+    };
+
+    const res = await axios.post(url, query, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
+    const user = res.data?.data?.matchedUser;
+    if (!user) return `❌ Could not fetch stats for ${username}.`;
+
+    const acArray = user.submitStats.acSubmissionNum || [];
+    const getCount = (diff) => acArray.find(d => d.difficulty === diff)?.count || 0;
+    const latest = { total: getCount('All'), easy: getCount('Easy'), medium: getCount('Medium'), hard: getCount('Hard') };
+
+    if (!oldest) {
+      const today = getISTDateKey(0);
+      await db.run(`INSERT INTO leetcode_stats(stat_date, username, total, easy, medium, hard) VALUES (?, ?, ?, ?, ?, ?)`, [today, username, latest.total, latest.easy, latest.medium, latest.hard]);
+      const initialOldest = { ...latest, stat_date: today };
+      const diff = { Easy: 0, Medium: 0, Hard: 0, total: 0 };
+      const formattedDate = new Date(initialOldest.stat_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' });
+      let msg = `📈 LeetCode Progress for ${username}\n`;
+      msg += `Solved since: ${formattedDate} (Initial Baseline)\n-----------\n`;
+      msg += `Easy   : ${diff.Easy}\nMedium : ${diff.Medium}\nHard   : ${diff.Hard}\nTotal  : ${diff.total}`;
+      return "```\n" + msg + "\n```";
+    }
+
+    const diff = {
+      Easy: Math.max(0, latest.easy - oldest.easy),
+      Medium: Math.max(0, latest.medium - oldest.medium),
+      Hard: Math.max(0, latest.hard - oldest.hard),
+      total: Math.max(0, latest.total - oldest.total),
+    };
+
+    const sinceDate = new Date(oldest.stat_date);
+    const formattedDate = sinceDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    let msg = `📈 LeetCode Progress for ${username}\n`;
+    msg += `Solved since: ${formattedDate}\n-----------\n`;
+    msg += `Easy   : ${diff.Easy}\nMedium : ${diff.Medium}\nHard   : ${diff.Hard}\nTotal  : ${diff.total}`;
+    return "```\n" + msg + "\n```";
+  } catch (err) {
+    log('ERROR', 'getOverallLeetcodeProgress failed:', err && err.stack ? err.stack : err);
+    return `❌ Error fetching overall progress for ${username}`;
   }
 }
 
@@ -168,10 +216,7 @@ async function getLeetcodeStats(username) {
 
     const res = await axios.post(url, query, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
     const user = res.data?.data?.matchedUser;
-    if (!user) {
-      log('WARN', `LeetCode returned no user for ${username}`, res.data);
-      return `❌ Could not fetch stats for ${username}.`;
-    }
+    if (!user) return `❌ Could not fetch stats for ${username}.`;
 
     const acArray = user.submitStats.acSubmissionNum || [];
     const getCount = (diff) => acArray.find(d => d.difficulty === diff)?.count || 0;
@@ -185,12 +230,7 @@ async function getLeetcodeStats(username) {
     const prev = await db.get(`SELECT * FROM leetcode_stats WHERE stat_date = ? and username = ?`, [yesterdayKey, username]);
     const prevStats = prev || { total: totalSolved, easy, medium, hard };
 
-    const diff = {
-      Easy: Math.max(0, easy - prevStats.easy),
-      Medium: Math.max(0, medium - prevStats.medium),
-      Hard: Math.max(0, hard - prevStats.hard),
-      total: Math.max(0, totalSolved - prevStats.total),
-    };
+    const diff = { Easy: Math.max(0, easy - prevStats.easy), Medium: Math.max(0, medium - prevStats.medium), Hard: Math.max(0, hard - prevStats.hard), total: Math.max(0, totalSolved - prevStats.total) };
 
     await db.run(`REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard) VALUES (?, ?, ?, ?, ?, ?)`, [today, username, totalSolved, easy, medium, hard]);
 
@@ -219,7 +259,7 @@ async function getPendingParticipants(chat) {
     const allMembers = (await chat.participants).map(getParticipantName).filter(name => name !== BOT_NUMBER);
     return allMembers.filter(name => !submittedUsers.includes(name));
   } catch (err) {
-    log('ERROR', 'getPendingParticipants failed:', err);
+    log('ERROR', 'getPendingParticipants failed:', err && err.stack ? err.stack : err);
     return [];
   }
 }
@@ -230,12 +270,26 @@ async function archiveGroupScores(groupId) {
     await db.run(`DELETE FROM scores WHERE group_id = ?`, [groupId]);
     log('INFO', `Archive & delete complete for ${groupId}`);
   } catch (err) {
-    log('ERROR', 'archiveGroupScores failed:', err);
+    log('ERROR', 'archiveGroupScores failed:', err && err.stack ? err.stack : err);
   }
 }
 
 // === BOT ===
-const client = new Client({ authStrategy: new LocalAuth(), puppeteer: { headless: true } });
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE || null;
+const puppeteerOptions = {
+  headless: process.env.HEADLESS !== 'false',
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--disable-gpu',
+    '--no-zygote'
+  ]
+};
+if (CHROME_PATH) puppeteerOptions.executablePath = CHROME_PATH;
+
+const client = new Client({ authStrategy: new LocalAuth(), puppeteer: puppeteerOptions });
 
 client.on('qr', (qr) => {
   log('INFO', 'QR code received — display in terminal');
@@ -243,23 +297,36 @@ client.on('qr', (qr) => {
 });
 client.on('authenticated', () => log('INFO', 'WhatsApp authenticated successfully'));
 client.on('auth_failure', (msg) => log('ERROR', 'Authentication failure:', msg));
+client.on('loading_screen', (percent, message) => log('DEBUG', `loading_screen ${percent}%: ${message}`));
+client.on('change_state', (state) => log('DEBUG', 'WhatsApp client state changed:', state));
+client.on('disconnected', (reason) => log('WARN', 'WhatsApp client disconnected:', reason));
+
 client.on('ready', async () => {
   try {
     log('INFO', 'Wordle Bot ready!');
+
     // Quick diagnostic: list group names (limited) to ensure client is actually connected
     const chats = await client.getChats();
-    const groupNames = chats.filter(c => c.isGroup).slice(0, 10).map(c => c.name);
-    log('DEBUG', `Connected groups (sample up to 10): ${JSON.stringify(groupNames)}`);
+    const groupNames = chats.filter(c => c.isGroup).slice(0, 50).map(c => ({ name: c.name, id: c.id._serialized }));
+    log('DEBUG', `Connected groups (sample up to 50): ${JSON.stringify(groupNames)}`);
 
     const foundTarget = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
     if (foundTarget) log('INFO', `Target group '${TARGET_GROUP_NAME}' is present (id=${foundTarget.id._serialized})`);
-    else log('WARN', `Target group '${TARGET_GROUP_NAME}' not found in first ${groupNames.length} groups — this could be normal if bot isn't in the group`);
+    else log('WARN', `Target group '${TARGET_GROUP_NAME}' not found among connected groups`);
+
+    // Optional: send an automated readiness message once (comment out if you don't want this)
+    if (process.env.SEND_READY_TEST === '1' && foundTarget) {
+      try {
+        await foundTarget.sendMessage('🤖 Bot online — readiness test message (remove this after verifying).');
+        log('INFO', 'Sent readiness test message to target group');
+      } catch (err) {
+        log('ERROR', 'Failed to send readiness test message:', err && err.stack ? err.stack : err);
+      }
+    }
   } catch (err) {
-    log('ERROR', 'Error in ready handler:', err);
+    log('ERROR', 'Error in ready handler:', err && err.stack ? err.stack : err);
   }
 });
-client.on('disconnected', (reason) => log('WARN', 'WhatsApp client disconnected:', reason));
-client.on('change_state', (state) => log('DEBUG', 'WhatsApp client state changed:', state));
 
 client.on('message', async (msg) => {
   try {
@@ -267,7 +334,7 @@ client.on('message', async (msg) => {
     if (!chat.isGroup) return;
 
     const groupId = chat.id._serialized;
-    const senderName = msg._data.notifyName || msg.author || msg.from || 'unknown';
+    const senderName = msg._data?.notifyName || msg.author || msg.from || 'unknown';
     const text = (msg.body || '').trim();
     log('DEBUG', `Message received in ${groupId} from ${senderName}: ${text.substring(0, 200)}`);
 
@@ -287,11 +354,7 @@ client.on('message', async (msg) => {
     if (text === '/current') { await msg.reply(await getDailyLeaderboard(groupId)); return; }
     if (text === '/total') { await msg.reply(await getTotalLeaderboard(groupId)); return; }
     if (text === '/all') { await msg.reply(await getCombinedLeaderboard(groupId)); return; }
-    if (text === '/pending') {
-      const pending = await getPendingParticipants(chat);
-      await msg.reply(pending.length === 0 ? '🎉 Everyone submitted today!' : `⏳ Pending submissions:\n${pending.join('\n')}`);
-      return;
-    }
+    if (text === '/pending') { const pending = await getPendingParticipants(chat); await msg.reply(pending.length === 0 ? '🎉 Everyone submitted today!' : `⏳ Pending submissions:\n${pending.join('\n')}`); return; }
     if (text === '/resetConfirmed') { await archiveGroupScores(groupId); await msg.reply('🗑️ Scores for this group archived and reset.'); return; }
 
     const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
@@ -328,20 +391,36 @@ try {
       await targetChat.sendMessage(stats);
       log('INFO', '✅ Daily LeetCode stats sent');
     } catch (err) {
-      log('ERROR', 'Error in daily cron job:', err);
+      log('ERROR', 'Error in daily cron job:', err && err.stack ? err.stack : err);
     }
   }, { timezone: 'Asia/Kolkata' });
 } catch (err) {
-  log('ERROR', 'Failed to schedule cron job:', err);
+  log('ERROR', 'Failed to schedule cron job:', err && err.stack ? err.stack : err);
 }
 
-// === START ===
+// === START Helpers ===
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+  ]);
+}
+
 (async () => {
   try {
     await initDB();
     log('INFO', 'Initialization complete. Calling client.initialize()');
-    await client.initialize();
-    log('INFO', 'client.initialize() returned (init attempted)');
+
+    try {
+      await withTimeout(client.initialize(), 60000, 'client.initialize()');
+      log('INFO', 'client.initialize() completed');
+    } catch (initErr) {
+      log('ERROR', 'client.initialize() failed or timed out:', initErr && initErr.stack ? initErr.stack : initErr);
+      // give a hint to operator instead of retrying automatically
+      log('INFO', 'If this was due to network/CDN outage, retry after connectivity is restored. To debug visually set HEADLESS=false and ensure PUPPETEER_EXECUTABLE_PATH points to a valid Chrome/Chromium binary.');
+      throw initErr;
+    }
+
   } catch (err) {
     log('ERROR', 'Startup failed:', err && err.stack ? err.stack : err);
     process.exit(1);
@@ -352,5 +431,6 @@ try {
 export const _internalDiagnostics = {
   DB_PATH,
   getDbHandle: () => db,
-  getLogLevel: () => process.env.LOG_LEVEL || 'DEBUG'
+  getLogLevel: () => process.env.LOG_LEVEL || 'DEBUG',
+  puppeteerOptions
 };
