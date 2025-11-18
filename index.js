@@ -40,15 +40,16 @@ process.on('exit', (code) => log('INFO', `Process exiting with code ${code}`));
 
 // === DB INIT (Refactored for SQLite) ===
 let db;
-async function ensureDbFileAccessible(path) {
+async function ensureDbFileAccessible(pathToFile) {
   try {
-    await fsPromises.mkdir(require('path').dirname(path), { recursive: true });
+    await fsPromises.mkdir(path.dirname(pathToFile), { recursive: true });
     // Try opening with read/write flags
-    await fsPromises.open(path, 'a+').then(fh => fh.close());
-    await fsPromises.access(path, fs.constants.R_OK | fs.constants.W_OK);
-    log('INFO', `DB file verified and accessible at ${path}`);
+    const fh = await fsPromises.open(pathToFile, 'a+');
+    await fh.close();
+    await fsPromises.access(pathToFile, fs.constants.R_OK | fs.constants.W_OK);
+    log('INFO', `DB file verified and accessible at ${pathToFile}`);
   } catch (err) {
-    log('ERROR', `DB file not accessible at ${path}:`, err);
+    log('ERROR', `DB file not accessible at ${pathToFile}:`, err);
     throw err;
   }
 }
