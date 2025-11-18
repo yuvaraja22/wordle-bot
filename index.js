@@ -3,288 +3,173 @@ const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 import axios from 'axios';
 import cron from 'node-cron';
-
-// === New SQLite Imports ===
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import fs from 'fs';
+import fsPromises from 'fs/promises';
 
 // === CONFIG ===
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
 const LEETCODE_USER = 'mathanika';
+const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
 
-// === Error Handling (Kept for PM2 restarts) ===
+// === SIMPLE TIMESTAMPED LOGGER ===
+const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+const CURRENT_LEVEL = process.env.LOG_LEVEL ? LOG_LEVELS[process.env.LOG_LEVEL] : LOG_LEVELS.DEBUG;
+function log(level, ...args) {
+  const lvl = level.toUpperCase();
+  if (LOG_LEVELS[lvl] < CURRENT_LEVEL) return;
+  const ts = new Date().toISOString();
+  const prefix = `${ts} ${lvl}`;
+  if (lvl === 'ERROR') console.error(prefix, ...args);
+  else if (lvl === 'WARN') console.warn(prefix, ...args);
+  else console.log(prefix, ...args);
+}
+
 process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
-  process.exit(1); // Forces PM2 to restart
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection:', reason);
+  log('ERROR', 'Uncaught Exception:', err && err.stack ? err.stack : err);
+  // Graceful shutdown — keep behaviour same for PM2 automatic restart
   process.exit(1);
 });
+process.on('unhandledRejection', (reason, promise) => {
+  log('ERROR', 'Unhandled Rejection:', reason);
+  process.exit(1);
+});
+process.on('exit', (code) => log('INFO', `Process exiting with code ${code}`));
 
 // === DB INIT (Refactored for SQLite) ===
 let db;
+async function ensureDbFileAccessible(path) {
+  try {
+    await fsPromises.mkdir(require('path').dirname(path), { recursive: true });
+    // Try opening with read/write flags
+    await fsPromises.open(path, 'a+').then(fh => fh.close());
+    await fsPromises.access(path, fs.constants.R_OK | fs.constants.W_OK);
+    log('INFO', `DB file verified and accessible at ${path}`);
+  } catch (err) {
+    log('ERROR', `DB file not accessible at ${path}:`, err);
+    throw err;
+  }
+}
 
 async function initDB() {
-  console.log('📦 Initializing SQLite database...');
-  
-  db = await open({
-    filename: '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db', 
-    driver: sqlite3.Database
-  });
+  log('INFO', 'Initializing SQLite database...');
+  await ensureDbFileAccessible(DB_PATH);
 
-  console.log('✅ Connected to SQLite database (bot.db)');
+  try {
+    db = await open({ filename: DB_PATH, driver: sqlite3.Database });
+    log('INFO', 'Connected to SQLite database (bot.db)');
 
-  // Note: All db.execute changed to db.run
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS scores (
-      group_id TEXT,
-      player_name TEXT,
-      score_date DATE,
-      score INT
-    )
-  `);
+    await db.run(`CREATE TABLE IF NOT EXISTS scores (group_id TEXT, player_name TEXT, score_date DATE, score INT)`);
+    await db.run(`CREATE TABLE IF NOT EXISTS scores_archive (group_id TEXT, player_name TEXT, score_date DATE, score INT)`);
+    await db.run(`CREATE TABLE IF NOT EXISTS leetcode_stats (stat_date DATE, username TEXT, total INT, easy INT, medium INT, hard INT, PRIMARY KEY (stat_date, username))`);
 
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS scores_archive (
-      group_id TEXT,
-      player_name TEXT,
-      score_date DATE,
-      score INT
-    )
-  `);
-
-  // FIXED: Changed PRIMARY KEY to be composite (stat_date, username)
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS leetcode_stats (
-      stat_date DATE,
-      username TEXT,
-      total INT,
-      easy INT,
-      medium INT,
-      hard INT,
-      PRIMARY KEY (stat_date, username) 
-    )
-  `);
+    // Verify tables exist (quick sanity check)
+    const tables = await db.all(`SELECT name FROM sqlite_master WHERE type='table'`);
+    log('DEBUG', 'SQLite tables present:', tables.map(t => t.name));
+  } catch (err) {
+    log('ERROR', 'Error while initializing DB:', err && err.stack ? err.stack : err);
+    throw err;
+  }
 }
 
 // === UTILS ===
 function getParticipantName(p) {
-  return p.notifyName || p.id._serialized || p.id.user.split('@')[0];
+  return p.notifyName || p.id._serialized || (p.id && p.id.user ? p.id.user.split('@')[0] : 'unknown');
 }
-
 function formatName(name) {
   return name.trim().substring(0, 4).padEnd(4);
 }
-
-// Helper to get IST date string (YYYY-MM-DD)
 function getISTDateKey(offsetDays = 0) {
   const now = new Date();
-  // convert to IST (+5:30)
-  const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
-  istTime.setDate(istTime.getDate() + offsetDays);
-  return istTime.toISOString().split('T')[0];
+  const istMs = now.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istMs);
+  istDate.setDate(istDate.getDate() + offsetDays);
+  return istDate.toISOString().split('T')[0];
+}
+function getDateFromWordleNumber(wordleNum) {
+  const anchorWordle = 1598;
+  const anchorDateStr = '2025-11-03';
+  const [ay, am, ad] = anchorDateStr.split('-').map(n => parseInt(n, 10));
+  const anchorMs = Date.UTC(ay, am - 1, ad);
+  const deltaDays = wordleNum - anchorWordle;
+  const targetMs = anchorMs + deltaDays * 24 * 60 * 60 * 1000;
+  const target = new Date(targetMs);
+  return target.toISOString().slice(0, 10);
 }
 
-
-// === LEADERBOARDS ===
+// === LEADERBOARDS / STATS ===
 async function getDailyLeaderboard(groupId) {
-  const today = getISTDateKey(0);
-  // db.execute changed to db.all
-  const rows = await db.all(
-    `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`,
-    [groupId, today]
-  );
-
-  if (rows.length === 0) return '📊 No scores submitted today yet!';
-  const sorted = rows.sort((a, b) => b.total_score - a.total_score);
-  const board = sorted.map((r, i) => `${i + 1}. ${r.player_name} ${r.total_score}`).join('\n');
-  return `🏆 *Today's Leaderboard (${today})*\n\n${board}`;
+  try {
+    const today = getISTDateKey(0);
+    log('DEBUG', `Fetching daily leaderboard for ${groupId} on ${today}`);
+    const rows = await db.all(`SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`, [groupId, today]);
+    if (!rows || rows.length === 0) return '📊 No scores submitted today yet!';
+    const sorted = rows.sort((a, b) => b.total_score - a.total_score);
+    const board = sorted.map((r, i) => `${i + 1}. ${r.player_name} ${r.total_score}`).join('\n');
+    return `🏆 *Today's Leaderboard (${today})*\n\n${board}`;
+  } catch (err) {
+    log('ERROR', 'getDailyLeaderboard failed:', err);
+    return '❌ Error fetching leaderboard';
+  }
 }
 
 async function getTotalLeaderboard(groupId) {
-  // db.execute changed to db.all
-  const rows = await db.all(
-    `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`,
-    [groupId]
-  );
-
-  if (rows.length === 0) return '📊 No total scores yet!';
-  const sorted = rows.sort((a, b) => b.total_score - a.total_score);
-  const board = sorted.map((r, i) => `${i + 1}. ${r.player_name} ${r.total_score}`).join('\n');
-  return `🏁 *All-Time Leaderboard*\n\n${board}`;
-}
-
-// === COMBINED LEADERBOARD ===
-async function getCombinedLeaderboard(groupId) {
-  const today = getISTDateKey(0);
-
-  // db.execute changed to db.all
-  const allRows = await db.all(
-    `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`,
-    [groupId]
-  );
-
-  // db.execute changed to db.all
-  const todayRows = await db.all(
-    `SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`,
-    [groupId, today]
-  );
-
-  const allTime = allRows.sort((a, b) => b.total_score - a.total_score);
-  const todayList = todayRows.sort((a, b) => b.total_score - a.total_score);
-  const maxLen = Math.max(allTime.length, todayList.length);
-
-  let lines = [];
-  lines.push("🏆 All-Time  |  🎖️ Today");
-  lines.push("-----------------------------");
-  for (let i = 0; i < maxLen; i++) {
-    const left = allTime[i]
-      ? `${String(i + 1).padStart(2)}. ${formatName(allTime[i].player_name)} ${String(allTime[i].total_score).padStart(2)}`
-      : " ".repeat(14);
-    const right = todayList[i]
-      ? `${String(i + 1).padStart(2)}. ${formatName(todayList[i].player_name)} ${String(todayList[i].total_score).padStart(2)}`
-      : "";
-    lines.push(`${left}  |  ${right}`);
-  }
-
-  return "```\n" + lines.join("\n") + "\n```";
-}
-
-
-// === OVERALL PROGRESS (API + DB MIX) ===
-async function getOverallLeetcodeProgress(username) {
   try {
-    // Step 1: Fetch oldest record from DB (db.execute changed to db.get)
-    // ORDER BY ASC LIMIT 1 is sufficient for db.get
-    const oldest = await db.get(
-      `SELECT * FROM leetcode_stats WHERE username = ? ORDER BY stat_date ASC LIMIT 1`,
-      [username]
-    );
+    log('DEBUG', `Fetching total leaderboard for ${groupId}`);
+    const rows = await db.all(`SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`, [groupId]);
+    if (!rows || rows.length === 0) return '📊 No total scores yet!';
+    const sorted = rows.sort((a, b) => b.total_score - a.total_score);
+    const board = sorted.map((r, i) => `${i + 1}. ${r.player_name} ${r.total_score}`).join('\n');
+    return `🏁 *All-Time Leaderboard*\n\n${board}`;
+  } catch (err) {
+    log('ERROR', 'getTotalLeaderboard failed:', err);
+    return '❌ Error fetching leaderboard';
+  }
+}
 
-    // Step 2: Fetch latest stats directly from LeetCode API
-    const url = `https://leetcode.com/graphql/`;
-    const query = {
-      query: `query getUserProfile($username: String!) {
-        matchedUser(username: $username) {
-          username
-          submitStats {
-            acSubmissionNum {
-              difficulty
-              count
-            }
-          }
-        }
-      }`,
-      variables: { username },
-    };
+async function getCombinedLeaderboard(groupId) {
+  try {
+    const today = getISTDateKey(0);
+    log('DEBUG', `Fetching combined leaderboard for ${groupId} on ${today}`);
+    const allRows = await db.all(`SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? GROUP BY player_name`, [groupId]);
+    const todayRows = await db.all(`SELECT player_name, SUM(score) as total_score FROM scores WHERE group_id = ? AND score_date = ? GROUP BY player_name`, [groupId, today]);
+    const allTime = (allRows || []).sort((a, b) => b.total_score - a.total_score);
+    const todayList = (todayRows || []).sort((a, b) => b.total_score - a.total_score);
 
-    const res = await axios.post(url, query, {
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    const user = res.data?.data?.matchedUser;
-    if (!user) return `❌ Could not fetch stats for ${username}.`;
-
-    const acArray = user.submitStats.acSubmissionNum || [];
-    const getCount = (diff) => acArray.find((d) => d.difficulty === diff)?.count || 0;
-
-    const latest = {
-      total: getCount('All'),
-      easy: getCount('Easy'),
-      medium: getCount('Medium'),
-      hard: getCount('Hard'),
-    };
-
-    // Step 3: If no oldest record exists, save current stats as baseline
-    if (!oldest) {
-      const today = getISTDateKey(0);
-      // db.execute changed to db.run
-      await db.run(
-        `INSERT INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [today, username, latest.total, latest.easy, latest.medium, latest.hard]
-      );
-      // Create a mock oldest object from latest for diff calculation
-      const initialOldest = { ...latest, stat_date: today };
-      
-      // Compute difference based on initial baseline (will be 0, but provides a date)
-      const diff = {
-        Easy: 0, Medium: 0, Hard: 0, total: 0
-      };
-      
-      // Use the formatted date from the initial record
-      const formattedDate = new Date(initialOldest.stat_date).toLocaleDateString('en-GB', {
-          day: '2-digit',
-          month: '2-digit',
-          year: '2-digit'
-      });
-      
-      let msg = `📈 LeetCode Progress for ${username}\n`;
-      msg += `Solved since: ${formattedDate} (Initial Baseline)\n`;
-      msg += `-----------\n`;
-      msg += `Easy   : ${diff.Easy}\n`;
-      msg += `Medium : ${diff.Medium}\n`;
-      msg += `Hard   : ${diff.Hard}\n`;
-      msg += `Total  : ${diff.total}`;
-      
-      return "```\n" + msg + "\n```";
+    const maxLen = Math.max(allTime.length, todayList.length);
+    let lines = [];
+    lines.push("🏆 All-Time  |  🎖️ Today");
+    lines.push("-----------------------------");
+    for (let i = 0; i < maxLen; i++) {
+      const left = allTime[i] ? `${String(i + 1).padStart(2)}. ${formatName(allTime[i].player_name)} ${String(allTime[i].total_score).padStart(2)}` : " ".repeat(14);
+      const right = todayList[i] ? `${String(i + 1).padStart(2)}. ${formatName(todayList[i].player_name)} ${String(todayList[i].total_score).padStart(2)}` : "";
+      lines.push(`${left}  |  ${right}`);
     }
 
-    // Step 4: Compute difference
-    const diff = {
-      Easy: Math.max(0, latest.easy - oldest.easy),
-      Medium: Math.max(0, latest.medium - oldest.medium),
-      Hard: Math.max(0, latest.hard - oldest.hard),
-      total: Math.max(0, latest.total - oldest.total),
-    };
-
-    const sinceDate = new Date(oldest.stat_date);
-    const formattedDate = sinceDate.toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: '2-digit'
-    });
-    // Step 5: Format message
-    let msg = `📈 LeetCode Progress for ${username}\n`;
-    msg += `Solved since: ${formattedDate}\n`;
-    msg += `-----------\n`;
-    msg += `Easy   : ${diff.Easy}\n`;
-    msg += `Medium : ${diff.Medium}\n`;
-    msg += `Hard   : ${diff.Hard}\n`;
-    msg += `Total  : ${diff.total}`;
-
-    return "```\n" + msg + "\n```";
+    return "```\n" + lines.join('\n') + "\n```";
   } catch (err) {
-    console.error(err);
-    return `❌ Error fetching overall progress for ${username}`;
+    log('ERROR', 'getCombinedLeaderboard failed:', err);
+    return '❌ Error building leaderboard';
   }
 }
-
 
 async function getLeetcodeStats(username) {
   try {
+    log('DEBUG', `Fetching LeetCode stats for ${username}`);
     const url = `https://leetcode.com/graphql/`;
     const query = {
-      query: `query getUserProfile($username: String!) {
-        matchedUser(username: $username) {
-          username
-          submitStats {
-            acSubmissionNum {
-              difficulty
-              count
-            }
-          }
-        }
-      }`,
+      query: `query getUserProfile($username: String!) { matchedUser(username: $username) { username submitStats { acSubmissionNum { difficulty count } } } }`,
       variables: { username },
     };
 
-    const res = await axios.post(url, query, { headers: { 'Content-Type': 'application/json' } });
+    const res = await axios.post(url, query, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
     const user = res.data?.data?.matchedUser;
-    if (!user) return `❌ Could not fetch stats for ${username}.`;
+    if (!user) {
+      log('WARN', `LeetCode returned no user for ${username}`, res.data);
+      return `❌ Could not fetch stats for ${username}.`;
+    }
 
     const acArray = user.submitStats.acSubmissionNum || [];
     const getCount = (diff) => acArray.find(d => d.difficulty === diff)?.count || 0;
@@ -295,8 +180,6 @@ async function getLeetcodeStats(username) {
 
     const today = getISTDateKey(0);
     const yesterdayKey = getISTDateKey(-1);
-
-    // db.execute changed to db.get
     const prev = await db.get(`SELECT * FROM leetcode_stats WHERE stat_date = ? and username = ?`, [yesterdayKey, username]);
     const prevStats = prev || { total: totalSolved, easy, medium, hard };
 
@@ -307,12 +190,7 @@ async function getLeetcodeStats(username) {
       total: Math.max(0, totalSolved - prevStats.total),
     };
 
-    // db.execute changed to db.run
-    await db.run(
-      `REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [today, username, totalSolved, easy, medium, hard]
-    );
+    await db.run(`REPLACE INTO leetcode_stats(stat_date, username, total, easy, medium, hard) VALUES (?, ?, ?, ?, ?, ?)`, [today, username, totalSolved, easy, medium, hard]);
 
     let msg = `LeetCode Stats for ${username}\n\n`;
     msg += `Solved Today |  Overall Solved\n`;
@@ -321,160 +199,156 @@ async function getLeetcodeStats(username) {
     msg += `Medium : ${diff.Medium}   |  ${medium}\n`;
     msg += `Hard   : ${diff.Hard}   |  ${hard}\n`;
     msg += `Total  : ${diff.total}   |  ${totalSolved}`;
-    
+
     return "```\n" + msg + "\n```";
   } catch (err) {
-    console.error(err);
+    log('ERROR', 'getLeetcodeStats failed:', err && err.stack ? err.stack : err);
     return `❌ Error fetching stats for ${username}`;
   }
 }
 
-function getDateFromWordleNumber(wordleNum) {
-  const anchorWordle = 1598;
-  const anchorDateStr = '2025-11-03'; // YYYY-MM-DD for anchorWordle
-
-  const [ay, am, ad] = anchorDateStr.split('-').map(n => parseInt(n, 10));
-  // Use UTC midnight for stable day arithmetic (no timezone conversions)
-  const anchorMs = Date.UTC(ay, am - 1, ad);
-
-  const deltaDays = wordleNum - anchorWordle;
-  const targetMs = anchorMs + deltaDays * 24 * 60 * 60 * 1000;
-
-  const target = new Date(targetMs);
-  return target.toISOString().slice(0, 10); // "YYYY-MM-DD"
-}
-
-// === HELPERS ===
+// === HELPERS FOR PENDING / ARCHIVE ===
 async function getPendingParticipants(chat) {
-  const today = getISTDateKey(0);
-  const groupId = chat.id._serialized;
-  // db.execute changed to db.all
-  const submittedRows = await db.all(
-    `SELECT player_name FROM scores WHERE group_id = ? AND score_date = ?`,
-    [groupId, today]
-  );
-  const submittedUsers = submittedRows.map(r => r.player_name);
-  const allMembers = (await chat.participants).map(getParticipantName).filter(name => name !== BOT_NUMBER);
-  return allMembers.filter(name => !submittedUsers.includes(name));
+  try {
+    const today = getISTDateKey(0);
+    const groupId = chat.id._serialized;
+    const submittedRows = await db.all(`SELECT player_name FROM scores WHERE group_id = ? AND score_date = ?`, [groupId, today]);
+    const submittedUsers = submittedRows.map(r => r.player_name);
+    const allMembers = (await chat.participants).map(getParticipantName).filter(name => name !== BOT_NUMBER);
+    return allMembers.filter(name => !submittedUsers.includes(name));
+  } catch (err) {
+    log('ERROR', 'getPendingParticipants failed:', err);
+    return [];
+  }
 }
-
 async function archiveGroupScores(groupId) {
-  // db.execute changed to db.run
-  await db.run(
-    `INSERT INTO scores_archive (group_id, player_name, score_date, score)
-     SELECT group_id, player_name, score_date, score FROM scores WHERE group_id = ?`,
-    [groupId]
-  );
-  // db.execute changed to db.run
-  await db.run(`DELETE FROM scores WHERE group_id = ?`, [groupId]);
+  try {
+    log('INFO', `Archiving scores for group ${groupId}`);
+    await db.run(`INSERT INTO scores_archive (group_id, player_name, score_date, score) SELECT group_id, player_name, score_date, score FROM scores WHERE group_id = ?`, [groupId]);
+    await db.run(`DELETE FROM scores WHERE group_id = ?`, [groupId]);
+    log('INFO', `Archive & delete complete for ${groupId}`);
+  } catch (err) {
+    log('ERROR', 'archiveGroupScores failed:', err);
+  }
 }
 
 // === BOT ===
-const client = new Client({ authStrategy: new LocalAuth() });
-client.on('qr', qr => qrcode.generate(qr, { small: true }));
-client.on('ready', () => console.log('✅ Wordle Bot ready!'));
+const client = new Client({ authStrategy: new LocalAuth(), puppeteer: { headless: true } });
 
-client.on('message', async msg => {
-  const chat = await msg.getChat();
-  if (!chat.isGroup) return;
+client.on('qr', (qr) => {
+  log('INFO', 'QR code received — display in terminal');
+  try { qrcode.generate(qr, { small: true }); } catch (e) { log('WARN', 'Failed to display QR in terminal:', e); }
+});
+client.on('authenticated', () => log('INFO', 'WhatsApp authenticated successfully'));
+client.on('auth_failure', (msg) => log('ERROR', 'Authentication failure:', msg));
+client.on('ready', async () => {
+  try {
+    log('INFO', 'Wordle Bot ready!');
+    // Quick diagnostic: list group names (limited) to ensure client is actually connected
+    const chats = await client.getChats();
+    const groupNames = chats.filter(c => c.isGroup).slice(0, 10).map(c => c.name);
+    log('DEBUG', `Connected groups (sample up to 10): ${JSON.stringify(groupNames)}`);
 
-  const groupId = chat.id._serialized;
-  const senderName = msg._data.notifyName || msg.author || msg.from;
-  const text = msg.body.trim();
-
-  if (chat.name === TARGET_GROUP_NAME && /^\/minustatus?$/i.test(text)) {
-    const stats = await getLeetcodeStats(LEETCODE_USER);
-    await msg.reply(stats);
+    const foundTarget = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
+    if (foundTarget) log('INFO', `Target group '${TARGET_GROUP_NAME}' is present (id=${foundTarget.id._serialized})`);
+    else log('WARN', `Target group '${TARGET_GROUP_NAME}' not found in first ${groupNames.length} groups — this could be normal if bot isn't in the group`);
+  } catch (err) {
+    log('ERROR', 'Error in ready handler:', err);
   }
+});
+client.on('disconnected', (reason) => log('WARN', 'WhatsApp client disconnected:', reason));
+client.on('change_state', (state) => log('DEBUG', 'WhatsApp client state changed:', state));
 
-  if (/^\/status\s+/i.test(text)) {
-    const username = text.split(' ')[1]?.trim();
-    if (!username) {
-      await msg.reply('❌ Please provide a username.\nExample: `/status yuva`');
-      return;
+client.on('message', async (msg) => {
+  try {
+    const chat = await msg.getChat();
+    if (!chat.isGroup) return;
+
+    const groupId = chat.id._serialized;
+    const senderName = msg._data.notifyName || msg.author || msg.from || 'unknown';
+    const text = (msg.body || '').trim();
+    log('DEBUG', `Message received in ${groupId} from ${senderName}: ${text.substring(0, 200)}`);
+
+    if (chat.name === TARGET_GROUP_NAME && /^\/minustatus?$/i.test(text)) {
+      const stats = await getLeetcodeStats(LEETCODE_USER);
+      await msg.reply(stats);
     }
-    const stats = await getOverallLeetcodeProgress(username);
-    await msg.reply(stats);
-    return;
-  }
 
-  if (text === '/current') {
-    await msg.reply(await getDailyLeaderboard(groupId));
-    return;
-  }
-
-  if (text === '/total') {
-    await msg.reply(await getTotalLeaderboard(groupId));
-    return;
-  }
-
-  if (text === '/all') {
-    await msg.reply(await getCombinedLeaderboard(groupId));
-    return;
-  }
-
-  if (text === '/pending') {
-    const pending = await getPendingParticipants(chat);
-    await msg.reply(
-      pending.length === 0
-        ? '🎉 Everyone submitted today!'
-        : `⏳ Pending submissions:\n${pending.join('\n')}`
-    );
-    return;
-  }
-
-  if (text === '/resetConfirmed') {
-    await archiveGroupScores(groupId);
-    await msg.reply('🗑️ Scores for this group archived and reset.');
-    return;
-  }
-
-  // === Wordle submission ===
-  const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
-  if (wordleMatch) {
-    let [_, gameNumber, attempts] = wordleMatch;
-    gameNumber = gameNumber.replace(/,/g, '');
-    let score = attempts.toUpperCase() === 'X' ? 0 : 7 - parseInt(attempts);
-
-    const wordleDate = getDateFromWordleNumber(parseInt(gameNumber));
-
-    // const today = getISTDateKey(0);
-    // db.execute changed to db.get
-    const existing = await db.get(
-      `SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`,
-      [groupId, senderName, wordleDate]
-    );
-
-    // existing.length > 0 changed to if (existing)
-    if (existing) {
-      await msg.reply(`⚠️ ${senderName}, you've already submitted for Wordle #${gameNumber} (${wordleDate}).`);
+    if (/^\/status\s+/i.test(text)) {
+      const username = text.split(' ')[1]?.trim();
+      if (!username) { await msg.reply('❌ Please provide a username.\nExample: `/status yuva`'); return; }
+      const stats = await getOverallLeetcodeProgress(username);
+      await msg.reply(stats);
       return;
     }
 
-    // db.execute changed to db.run
-    await db.run(
-      `INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`,
-      [groupId, senderName, wordleDate, score]
-    );
+    if (text === '/current') { await msg.reply(await getDailyLeaderboard(groupId)); return; }
+    if (text === '/total') { await msg.reply(await getTotalLeaderboard(groupId)); return; }
+    if (text === '/all') { await msg.reply(await getCombinedLeaderboard(groupId)); return; }
+    if (text === '/pending') {
+      const pending = await getPendingParticipants(chat);
+      await msg.reply(pending.length === 0 ? '🎉 Everyone submitted today!' : `⏳ Pending submissions:\n${pending.join('\n')}`);
+      return;
+    }
+    if (text === '/resetConfirmed') { await archiveGroupScores(groupId); await msg.reply('🗑️ Scores for this group archived and reset.'); return; }
 
-    const leaderboardMsg = await getCombinedLeaderboard(groupId);
-    await msg.reply(leaderboardMsg);
+    const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
+    if (wordleMatch) {
+      let [_, gameNumber, attempts] = wordleMatch;
+      gameNumber = gameNumber.replace(/,/g, '');
+      let score = attempts.toUpperCase() === 'X' ? 0 : 7 - parseInt(attempts);
+      const wordleDate = getDateFromWordleNumber(parseInt(gameNumber));
+
+      const existing = await db.get(`SELECT * FROM scores WHERE group_id = ? AND player_name = ? AND score_date = ?`, [groupId, senderName, wordleDate]);
+      if (existing) { await msg.reply(`⚠️ ${senderName}, you've already submitted for Wordle #${gameNumber} (${wordleDate}).`); return; }
+
+      await db.run(`INSERT INTO scores (group_id, player_name, score_date, score) VALUES (?, ?, ?, ?)`, [groupId, senderName, wordleDate, score]);
+      log('INFO', `Inserted score for ${senderName} (group=${groupId}, date=${wordleDate}, score=${score})`);
+
+      const leaderboardMsg = await getCombinedLeaderboard(groupId);
+      await msg.reply(leaderboardMsg);
+    }
+  } catch (err) {
+    log('ERROR', 'Error handling message:', err && err.stack ? err.stack : err);
+    // don't crash the process for a single message failure
   }
 });
 
 // === DAILY CRON ===
-cron.schedule(
-  '0 20 * * *',
-  async () => {
-    const chats = await client.getChats();
-    const targetChat = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
-    if (!targetChat) return;
-    const stats = await getLeetcodeStats(LEETCODE_USER);
-    await targetChat.sendMessage(stats);
-    console.log('✅ Daily LeetCode stats sent');
-  },
-  { timezone: 'Asia/Kolkata' }
-);
+try {
+  cron.schedule('0 20 * * *', async () => {
+    try {
+      log('INFO', 'Running daily cron job: sending LeetCode stats');
+      const chats = await client.getChats();
+      const targetChat = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
+      if (!targetChat) { log('WARN', `Daily cron: target group '${TARGET_GROUP_NAME}' not found`); return; }
+      const stats = await getLeetcodeStats(LEETCODE_USER);
+      await targetChat.sendMessage(stats);
+      log('INFO', '✅ Daily LeetCode stats sent');
+    } catch (err) {
+      log('ERROR', 'Error in daily cron job:', err);
+    }
+  }, { timezone: 'Asia/Kolkata' });
+} catch (err) {
+  log('ERROR', 'Failed to schedule cron job:', err);
+}
 
 // === START ===
-(async () => { await initDB(); client.initialize(); })();
+(async () => {
+  try {
+    await initDB();
+    log('INFO', 'Initialization complete. Calling client.initialize()');
+    await client.initialize();
+    log('INFO', 'client.initialize() returned (init attempted)');
+  } catch (err) {
+    log('ERROR', 'Startup failed:', err && err.stack ? err.stack : err);
+    process.exit(1);
+  }
+})();
+
+// === ADDITIONAL DIAGNOSTIC EXPORTS ===
+export const _internalDiagnostics = {
+  DB_PATH,
+  getDbHandle: () => db,
+  getLogLevel: () => process.env.LOG_LEVEL || 'DEBUG'
+};
