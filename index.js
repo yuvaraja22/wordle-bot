@@ -12,7 +12,7 @@ import path from 'path';
 // === CONFIG ===
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
-const DAILY_WORD_GROUP_NAME = 'Project Minu'; // Group to send daily words to
+const DAILY_WORD_GROUP_NAME = 'Wordle 2.0'; // Group to send daily words to
 const LEETCODE_USER = 'mathanika';
 const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
 
