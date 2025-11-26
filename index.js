@@ -18,7 +18,7 @@ const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
 
 // === SIMPLE TIMESTAMPED LOGGER ===
 const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
-const CURRENT_LEVEL = process.env.LOG_LEVEL ? LOG_LEVELS[process.env.LOG_LEVEL] ?? LOG_LEVELS.DEBUG : LOG_LEVELS.DEBUG;
+const CURRENT_LEVEL = process.env.LOG_LEVEL ? LOG_LEVELS[process.env.LOG_LEVEL] ?? LOG_LEVELS.INFO : LOG_LEVELS.INFO;
 function log(level, ...args) {
   const lvl = String(level).toUpperCase();
   if ((LOG_LEVELS[lvl] ?? 0) < CURRENT_LEVEL) return;
@@ -385,7 +385,7 @@ client.on('message', async (msg) => {
     const groupId = chat.id._serialized;
     const senderName = msg._data?.notifyName || msg.author || msg.from || 'unknown';
     const text = (msg.body || '').trim();
-    log('DEBUG', `Message received in ${groupId} from ${senderName}: ${text.substring(0, 200)}`);
+    // log('DEBUG', `Message received in ${groupId} from ${senderName}: ${text.substring(0, 200)}`);
 
     if (chat.name === TARGET_GROUP_NAME && /^\/minustatus?$/i.test(text)) {
       const stats = await getLeetcodeStats(LEETCODE_USER);
@@ -499,6 +499,6 @@ function withTimeout(promise, ms, label) {
 export const _internalDiagnostics = {
   DB_PATH,
   getDbHandle: () => db,
-  getLogLevel: () => process.env.LOG_LEVEL || 'DEBUG',
+  getLogLevel: () => process.env.LOG_LEVEL || 'INFO',
   puppeteerOptions
 };
