@@ -12,8 +12,9 @@ import path from 'path';
 // === CONFIG ===
 const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
+const DAILY_WORD_GROUP_NAME = 'Project Minu'; // Group to send daily words to
 const LEETCODE_USER = 'mathanika';
-const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
+const DB_PATH = path.join(process.cwd(), 'bot.db');
 
 // === SIMPLE TIMESTAMPED LOGGER ===
 const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
@@ -65,6 +66,7 @@ async function initDB() {
     await db.run(`CREATE TABLE IF NOT EXISTS scores (group_id TEXT, player_name TEXT, score_date DATE, score INT)`);
     await db.run(`CREATE TABLE IF NOT EXISTS scores_archive (group_id TEXT, player_name TEXT, score_date DATE, score INT)`);
     await db.run(`CREATE TABLE IF NOT EXISTS leetcode_stats (stat_date DATE, username TEXT, total INT, easy INT, medium INT, hard INT, PRIMARY KEY (stat_date, username))`);
+    await db.run(`CREATE TABLE IF NOT EXISTS daily_words (id INTEGER PRIMARY KEY AUTOINCREMENT, word TEXT UNIQUE, used INTEGER DEFAULT 0)`);
 
     const tables = await db.all(`SELECT name FROM sqlite_master WHERE type='table'`);
     log('DEBUG', 'SQLite tables present:', tables.map(t => t.name));
@@ -249,6 +251,53 @@ async function getLeetcodeStats(username) {
   }
 }
 
+// === DAILY WORD LOGIC ===
+async function addWord(word) {
+  try {
+    await db.run(`INSERT INTO daily_words (word) VALUES (?)`, [word.trim()]);
+    return `✅ Word "${word}" added to the list.`;
+  } catch (err) {
+    if (err.message.includes('UNIQUE constraint failed')) return `⚠️ Word "${word}" already exists.`;
+    log('ERROR', 'addWord failed:', err);
+    return `❌ Error adding word.`;
+  }
+}
+
+async function getAndMarkRandomWord() {
+  try {
+    const row = await db.get(`SELECT * FROM daily_words WHERE used = 0 ORDER BY RANDOM() LIMIT 1`);
+    if (!row) return null;
+    await db.run(`UPDATE daily_words SET used = 1 WHERE id = ?`, [row.id]);
+    return row.word;
+  } catch (err) {
+    log('ERROR', 'getAndMarkRandomWord failed:', err);
+    return null;
+  }
+}
+
+async function sendDailyWord(client) {
+  try {
+    log('INFO', 'Running daily word job');
+    const word = await getAndMarkRandomWord();
+    if (!word) {
+      log('WARN', 'No unused words available for daily word.');
+      return;
+    }
+
+    const chats = await client.getChats();
+    const targetChat = chats.find(c => c.isGroup && c.name === DAILY_WORD_GROUP_NAME);
+    if (!targetChat) {
+      log('WARN', `Daily word: target group '${DAILY_WORD_GROUP_NAME}' not found`);
+      return;
+    }
+
+    await targetChat.sendMessage(`🌟 *Word of the Day* 🌟\n\n${word}`);
+    log('INFO', `✅ Daily word "${word}" sent to ${DAILY_WORD_GROUP_NAME}`);
+  } catch (err) {
+    log('ERROR', 'Error in sendDailyWord:', err);
+  }
+}
+
 // === HELPERS FOR PENDING / ARCHIVE ===
 async function getPendingParticipants(chat) {
   try {
@@ -357,6 +406,20 @@ client.on('message', async (msg) => {
     if (text === '/pending') { const pending = await getPendingParticipants(chat); await msg.reply(pending.length === 0 ? '🎉 Everyone submitted today!' : `⏳ Pending submissions:\n${pending.join('\n')}`); return; }
     if (text === '/resetConfirmed') { await archiveGroupScores(groupId); await msg.reply('🗑️ Scores for this group archived and reset.'); return; }
 
+    if (text.startsWith('/addword ')) {
+      const word = text.substring(9).trim();
+      if (!word) { await msg.reply('❌ Please provide a word.'); return; }
+      const res = await addWord(word);
+      await msg.reply(res);
+      return;
+    }
+
+    if (text === '/testdailyword') {
+      await sendDailyWord(client);
+      await msg.reply('Attempted to send daily word. Check logs if nothing appeared.');
+      return;
+    }
+
     const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
     if (wordleMatch) {
       let [_, gameNumber, attempts] = wordleMatch;
@@ -393,6 +456,11 @@ try {
     } catch (err) {
       log('ERROR', 'Error in daily cron job:', err && err.stack ? err.stack : err);
     }
+  }, { timezone: 'Asia/Kolkata' });
+
+  // Daily Word at 12 AM
+  cron.schedule('0 0 * * *', async () => {
+    await sendDailyWord(client);
   }, { timezone: 'Asia/Kolkata' });
 } catch (err) {
   log('ERROR', 'Failed to schedule cron job:', err && err.stack ? err.stack : err);
