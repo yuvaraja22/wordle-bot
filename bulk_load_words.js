@@ -3,7 +3,7 @@ import { open } from 'sqlite';
 import fs from 'fs/promises';
 import path from 'path';
 
-const DB_PATH = path.join(process.cwd(), 'bot.db');
+const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
 const NEW_WORDS_FILE = 'new_words.txt';
 
 async function bulkLoad() {
