@@ -416,7 +416,7 @@ client.on('message', async (msg) => {
 
     if (text === '/testdailyword') {
       await sendDailyWord(client);
-      await msg.reply('Attempted to send daily word. Check logs if nothing appeared.');
+      // await msg.reply('Attempted to send daily word. Check logs if nothing appeared.');
       return;
     }
 

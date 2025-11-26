@@ -4,7 +4,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
-const NEW_WORDS_FILE = 'new_words.txt';
+const NEW_WORDS_FILE = 'filtered_words.txt';
 
 async function bulkLoad() {
     let db;

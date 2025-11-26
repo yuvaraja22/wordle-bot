@@ -4,6 +4,8 @@ import path from 'path';
 const OLD_WORDS_FILE = 'old_words.txt';
 const NEW_WORDS_FILE = 'new_words.txt';
 
+const FILTERED_WORDS_FILE = 'filtered_words.txt';
+
 async function filterWords() {
     try {
         // Read files
@@ -31,21 +33,26 @@ async function filterWords() {
             const word = line.trim();
             if (!word) continue;
 
+            const lowerWord = word.toLowerCase();
+            const isUniqueChars = new Set(lowerWord).size === lowerWord.length;
+
             if (word.length !== 5) {
-                removedCount++; // Counting length mismatch as removed for simplicity in log, or track separately
-            } else if (oldWords.has(word.toLowerCase())) {
+                removedCount++;
+            } else if (!isUniqueChars) {
+                removedCount++;
+            } else if (oldWords.has(lowerWord)) {
                 removedCount++;
             } else {
                 filteredWords.push(word);
             }
         }
 
-        // Write back
-        await fs.writeFile(NEW_WORDS_FILE, filteredWords.join('\n') + '\n');
+        // Write to new file
+        await fs.writeFile(FILTERED_WORDS_FILE, filteredWords.join('\n') + '\n');
 
         console.log(`Processed ${newWordsLines.length} lines in ${NEW_WORDS_FILE}`);
-        console.log(`Removed ${removedCount} duplicates.`);
-        console.log(`Remaining words: ${filteredWords.length}`);
+        console.log(`Removed ${removedCount} words (duplicates, length != 5, or repeating letters).`);
+        console.log(`Remaining words written to ${FILTERED_WORDS_FILE}: ${filteredWords.length}`);
 
     } catch (err) {
         console.error('Error filtering words:', err);
