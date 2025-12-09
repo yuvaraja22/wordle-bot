@@ -369,10 +369,13 @@ client.on('qr', (qr) => {
   log('INFO', 'QR code received — display in terminal');
   try { qrcode.generate(qr, { small: true }); } catch (e) { log('WARN', 'Failed to display QR in terminal:', e); }
 });
-client.on('authenticated', () => log('INFO', 'WhatsApp authenticated successfully'));
+client.on('authenticated', () => {
+  log('INFO', 'WhatsApp authenticated successfully');
+  log('INFO', 'Waiting for ready event...');
+});
 client.on('auth_failure', (msg) => log('ERROR', 'Authentication failure:', msg));
-client.on('loading_screen', (percent, message) => log('DEBUG', `loading_screen ${percent}%: ${message}`));
-client.on('change_state', (state) => log('DEBUG', 'WhatsApp client state changed:', state));
+client.on('loading_screen', (percent, message) => log('INFO', `loading_screen ${percent}%: ${message}`));
+client.on('change_state', (state) => log('INFO', 'WhatsApp client state changed:', state));
 client.on('disconnected', (reason) => log('WARN', 'WhatsApp client disconnected:', reason));
 
 client.on('ready', async () => {
