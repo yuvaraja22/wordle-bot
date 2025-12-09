@@ -298,6 +298,31 @@ async function sendDailyWord(client) {
   }
 }
 
+// === REMINDER FOR PENDING PARTICIPANTS ===
+async function sendWordleReminder(client) {
+  try {
+    log('INFO', 'Running Wordle reminder job');
+    const chats = await client.getChats();
+    const targetChat = chats.find(c => c.isGroup && c.name === DAILY_WORD_GROUP_NAME);
+    if (!targetChat) {
+      log('WARN', `Wordle reminder: target group '${DAILY_WORD_GROUP_NAME}' not found`);
+      return;
+    }
+
+    const pending = await getPendingParticipants(targetChat);
+    if (pending.length === 0) {
+      log('INFO', 'Wordle reminder: Everyone has submitted today!');
+      return;
+    }
+
+    const reminderMsg = `⏰ *Wordle Reminder!* ⏰\n\nThe following members haven't submitted their Wordle yet:\n\n${pending.map(name => `• ${name}`).join('\n')}\n\n🎯 Don't forget to play today's Wordle!`;
+    await targetChat.sendMessage(reminderMsg);
+    log('INFO', `✅ Wordle reminder sent to ${DAILY_WORD_GROUP_NAME} for ${pending.length} pending members`);
+  } catch (err) {
+    log('ERROR', 'Error in sendWordleReminder:', err);
+  }
+}
+
 // === HELPERS FOR PENDING / ARCHIVE ===
 async function getPendingParticipants(chat) {
   try {
@@ -420,6 +445,11 @@ client.on('message', async (msg) => {
       return;
     }
 
+    if (text === '/testreminder') {
+      await sendWordleReminder(client);
+      return;
+    }
+
     const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
     if (wordleMatch) {
       let [_, gameNumber, attempts] = wordleMatch;
@@ -461,6 +491,11 @@ try {
   // Daily Word at 12 AM
   cron.schedule('0 0 * * *', async () => {
     await sendDailyWord(client);
+  }, { timezone: 'Asia/Kolkata' });
+
+  // Wordle Reminder at 11:45 AM IST
+  cron.schedule('45 11 * * *', async () => {
+    await sendWordleReminder(client);
   }, { timezone: 'Asia/Kolkata' });
 } catch (err) {
   log('ERROR', 'Failed to schedule cron job:', err && err.stack ? err.stack : err);
