@@ -374,11 +374,15 @@ client.on('authenticated', () => {
   log('INFO', 'Waiting for ready event...');
 });
 client.on('auth_failure', (msg) => log('ERROR', 'Authentication failure:', msg));
-client.on('loading_screen', (percent, message) => log('INFO', `loading_screen ${percent}%: ${message}`));
-client.on('change_state', (state) => log('INFO', 'WhatsApp client state changed:', state));
-client.on('disconnected', (reason) => log('WARN', 'WhatsApp client disconnected:', reason));
 
-client.on('ready', async () => {
+// Track if ready event has fired
+let isReady = false;
+
+// Shared initialization logic
+async function onBotReady() {
+  if (isReady) return; // Prevent double initialization
+  isReady = true;
+
   try {
     log('INFO', 'Wordle Bot ready!');
 
@@ -403,6 +407,26 @@ client.on('ready', async () => {
   } catch (err) {
     log('ERROR', 'Error in ready handler:', err && err.stack ? err.stack : err);
   }
+}
+
+client.on('loading_screen', async (percent, message) => {
+  log('INFO', `loading_screen ${percent}%: ${message}`);
+  // Fallback: if loading_screen reaches 100% and ready hasn't fired, trigger manually
+  if (percent === 100 && !isReady) {
+    log('INFO', 'loading_screen at 100%, triggering ready fallback after delay...');
+    setTimeout(() => {
+      if (!isReady) {
+        log('INFO', 'Ready event did not fire, using fallback initialization');
+        onBotReady();
+      }
+    }, 2000); // 2 second delay to give ready event a chance
+  }
+});
+client.on('change_state', (state) => log('INFO', 'WhatsApp client state changed:', state));
+client.on('disconnected', (reason) => log('WARN', 'WhatsApp client disconnected:', reason));
+
+client.on('ready', async () => {
+  await onBotReady();
 });
 
 client.on('message', async (msg) => {
