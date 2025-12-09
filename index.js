@@ -309,7 +309,8 @@ async function sendWordleReminder(client) {
       return;
     }
 
-    const pending = await getPendingParticipants(targetChat);
+    const groupId = targetChat.id._serialized;
+    const pending = await getPendingParticipants(groupId);
     if (pending.length === 0) {
       log('INFO', 'Wordle reminder: Everyone has submitted today!');
       return;
@@ -324,14 +325,20 @@ async function sendWordleReminder(client) {
 }
 
 // === HELPERS FOR PENDING / ARCHIVE ===
-async function getPendingParticipants(chat) {
+async function getPendingParticipants(groupId) {
   try {
     const today = getISTDateKey(0);
-    const groupId = chat.id._serialized;
+
+    // Get all distinct players who have ever submitted in this group
+    const allPlayersRows = await db.all(`SELECT DISTINCT player_name FROM scores WHERE group_id = ?`, [groupId]);
+    const allPlayers = allPlayersRows.map(r => r.player_name);
+
+    // Get players who have submitted today
     const submittedRows = await db.all(`SELECT player_name FROM scores WHERE group_id = ? AND score_date = ?`, [groupId, today]);
     const submittedUsers = submittedRows.map(r => r.player_name);
-    const allMembers = (await chat.participants).map(getParticipantName).filter(name => name !== BOT_NUMBER);
-    return allMembers.filter(name => !submittedUsers.includes(name));
+
+    // Return players who haven't submitted today
+    return allPlayers.filter(name => !submittedUsers.includes(name));
   } catch (err) {
     log('ERROR', 'getPendingParticipants failed:', err && err.stack ? err.stack : err);
     return [];
@@ -472,7 +479,7 @@ client.on('message', async (msg) => {
     if (text === '/current') { await msg.reply(await getDailyLeaderboard(groupId)); return; }
     if (text === '/total') { await msg.reply(await getTotalLeaderboard(groupId)); return; }
     if (text === '/all') { await msg.reply(await getCombinedLeaderboard(groupId)); return; }
-    if (text === '/pending') { const pending = await getPendingParticipants(chat); await msg.reply(pending.length === 0 ? '🎉 Everyone submitted today!' : `⏳ Pending submissions:\n${pending.join('\n')}`); return; }
+    if (text === '/pending') { const pending = await getPendingParticipants(groupId); await msg.reply(pending.length === 0 ? '🎉 Everyone submitted today!' : `⏳ Pending submissions:\n${pending.join('\n')}`); return; }
     if (text === '/resetConfirmed') { await archiveGroupScores(groupId); await msg.reply('🗑️ Scores for this group archived and reset.'); return; }
 
     if (text.startsWith('/addword ')) {
@@ -537,8 +544,8 @@ try {
     await sendDailyWord(client);
   }, { timezone: 'Asia/Kolkata' });
 
-  // Wordle Reminder at 11:45 AM IST
-  cron.schedule('45 11 * * *', async () => {
+  // Wordle Reminder at 11:30 PM IST
+  cron.schedule('30 23 * * *', async () => {
     await sendWordleReminder(client);
   }, { timezone: 'Asia/Kolkata' });
 } catch (err) {
