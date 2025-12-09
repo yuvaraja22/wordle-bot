@@ -378,6 +378,23 @@ client.on('auth_failure', (msg) => log('ERROR', 'Authentication failure:', msg))
 // Track if ready event has fired
 let isReady = false;
 
+// Helper to retry getChats with delay
+async function getChatsWithRetry(maxRetries = 5, delayMs = 2000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const chats = await client.getChats();
+      return chats;
+    } catch (err) {
+      log('WARN', `getChats attempt ${i + 1}/${maxRetries} failed: ${err.message}`);
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 // Shared initialization logic
 async function onBotReady() {
   if (isReady) return; // Prevent double initialization
@@ -387,7 +404,7 @@ async function onBotReady() {
     log('INFO', 'Wordle Bot ready!');
 
     // Quick diagnostic: list group names (limited) to ensure client is actually connected
-    const chats = await client.getChats();
+    const chats = await getChatsWithRetry();
     const groupNames = chats.filter(c => c.isGroup).slice(0, 50).map(c => ({ name: c.name, id: c.id._serialized }));
     log('DEBUG', `Connected groups (sample up to 50): ${JSON.stringify(groupNames)}`);
 
@@ -419,7 +436,7 @@ client.on('loading_screen', async (percent, message) => {
         log('INFO', 'Ready event did not fire, using fallback initialization');
         onBotReady();
       }
-    }, 2000); // 2 second delay to give ready event a chance
+    }, 5000); // 5 second delay to give WhatsApp store time to initialize
   }
 });
 client.on('change_state', (state) => log('INFO', 'WhatsApp client state changed:', state));
