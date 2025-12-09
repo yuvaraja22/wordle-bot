@@ -385,52 +385,11 @@ client.on('auth_failure', (msg) => log('ERROR', 'Authentication failure:', msg))
 // Track if ready event has fired
 let isReady = false;
 
-// Helper to retry getChats with delay
-async function getChatsWithRetry(maxRetries = 5, delayMs = 2000) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const chats = await client.getChats();
-      return chats;
-    } catch (err) {
-      log('WARN', `getChats attempt ${i + 1}/${maxRetries} failed: ${err.message}`);
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      } else {
-        throw err;
-      }
-    }
-  }
-}
-
 // Shared initialization logic
 async function onBotReady() {
   if (isReady) return; // Prevent double initialization
   isReady = true;
-
-  try {
-    log('INFO', 'Wordle Bot ready!');
-
-    // Quick diagnostic: list group names (limited) to ensure client is actually connected
-    const chats = await getChatsWithRetry();
-    const groupNames = chats.filter(c => c.isGroup).slice(0, 50).map(c => ({ name: c.name, id: c.id._serialized }));
-    log('DEBUG', `Connected groups (sample up to 50): ${JSON.stringify(groupNames)}`);
-
-    const foundTarget = chats.find(c => c.isGroup && c.name === TARGET_GROUP_NAME);
-    if (foundTarget) log('INFO', `Target group '${TARGET_GROUP_NAME}' is present (id=${foundTarget.id._serialized})`);
-    else log('WARN', `Target group '${TARGET_GROUP_NAME}' not found among connected groups`);
-
-    // Optional: send an automated readiness message once (comment out if you don't want this)
-    if (process.env.SEND_READY_TEST === '1' && foundTarget) {
-      try {
-        await foundTarget.sendMessage('🤖 Bot online — readiness test message (remove this after verifying).');
-        log('INFO', 'Sent readiness test message to target group');
-      } catch (err) {
-        log('ERROR', 'Failed to send readiness test message:', err && err.stack ? err.stack : err);
-      }
-    }
-  } catch (err) {
-    log('ERROR', 'Error in ready handler:', err && err.stack ? err.stack : err);
-  }
+  log('INFO', 'Wordle Bot ready!');
 }
 
 client.on('loading_screen', async (percent, message) => {
