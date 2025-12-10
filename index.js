@@ -67,6 +67,7 @@ async function initDB() {
     await db.run(`CREATE TABLE IF NOT EXISTS scores_archive (group_id TEXT, player_name TEXT, score_date DATE, score INT)`);
     await db.run(`CREATE TABLE IF NOT EXISTS leetcode_stats (stat_date DATE, username TEXT, total INT, easy INT, medium INT, hard INT, PRIMARY KEY (stat_date, username))`);
     await db.run(`CREATE TABLE IF NOT EXISTS daily_words (id INTEGER PRIMARY KEY AUTOINCREMENT, word TEXT UNIQUE, used INTEGER DEFAULT 0)`);
+    await db.run(`CREATE TABLE IF NOT EXISTS sent_words (sent_date DATE PRIMARY KEY, word TEXT NOT NULL)`);
 
     const tables = await db.all(`SELECT name FROM sqlite_master WHERE type='table'`);
     log('DEBUG', 'SQLite tables present:', tables.map(t => t.name));
@@ -291,10 +292,26 @@ async function sendDailyWord(client) {
       return;
     }
 
+    // Record the sent word with today's date
+    const today = getISTDateKey(0);
+    await db.run(`INSERT OR REPLACE INTO sent_words (sent_date, word) VALUES (?, ?)`, [today, word]);
+
     await targetChat.sendMessage(`🌟 *Word of the Day* 🌟\n\n${word}`);
     log('INFO', `✅ Daily word "${word}" sent to ${DAILY_WORD_GROUP_NAME}`);
   } catch (err) {
     log('ERROR', 'Error in sendDailyWord:', err);
+  }
+}
+
+async function getTodaysWord() {
+  try {
+    const today = getISTDateKey(0);
+    const row = await db.get(`SELECT word FROM sent_words WHERE sent_date = ?`, [today]);
+    if (!row) return null;
+    return row.word;
+  } catch (err) {
+    log('ERROR', 'getTodaysWord failed:', err);
+    return null;
   }
 }
 
@@ -457,6 +474,16 @@ client.on('message', async (msg) => {
 
     if (text === '/testreminder') {
       await sendWordleReminder(client);
+      return;
+    }
+
+    if (text === '/word') {
+      const word = await getTodaysWord();
+      if (word) {
+        await msg.reply(`📝 *Today's Word:* ${word}`);
+      } else {
+        await msg.reply(`❌ No word has been sent today yet.`);
+      }
       return;
     }
 
