@@ -333,7 +333,16 @@ async function sendWordleReminder(client) {
       return;
     }
 
-    const reminderMsg = `⏰ *Wordle Reminder!* ⏰\n\nThe following members haven't submitted their Wordle yet:\n\n${pending.map(name => `• ${name}`).join('\n')}\n\n🎯 Don't forget to play today's Wordle!`;
+    let lines = [];
+    lines.push("⏰ Wordle Reminder!");
+    lines.push("-----------------------------");
+    pending.forEach((name, i) => {
+      lines.push(`${String(i + 1).padStart(2)}. ${formatName(name)}`);
+    });
+    lines.push("-----------------------------");
+    lines.push("🎯 Don't forget to play!");
+
+    const reminderMsg = "```\n" + lines.join('\n') + "\n```";
     await targetChat.sendMessage(reminderMsg);
     log('INFO', `✅ Wordle reminder sent to ${DAILY_WORD_GROUP_NAME} for ${pending.length} pending members`);
   } catch (err) {
