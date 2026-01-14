@@ -496,7 +496,7 @@ client.on('message', async (msg) => {
       return;
     }
 
-    const wordleMatch = text.match(/Wordle\s+([\d,]+)\s+([X\d])\/6/i);
+    const wordleMatch = text.match(/(?:Wordle|easy mathler)\s+([\d,]+)\s+([X\d])\/6/i);
     if (wordleMatch) {
       let [_, gameNumber, attempts] = wordleMatch;
       gameNumber = gameNumber.replace(/,/g, '');
