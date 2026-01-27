@@ -14,7 +14,7 @@ const BOT_NUMBER = '919011111111'; // bot's own number to exclude from pending
 const TARGET_GROUP_NAME = 'Project Minu'; // replace with your group name
 const DAILY_WORD_GROUP_NAME = 'Wordle 2.0'; // Group to send daily words to
 const LEETCODE_USER = 'mathanika';
-const DB_PATH = '/home/yuvarajacoc/var/lib/wordle-bot-data/bot.db';
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'bot.db');
 
 // === SIMPLE TIMESTAMPED LOGGER ===
 const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };

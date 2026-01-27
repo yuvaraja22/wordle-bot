@@ -3,14 +3,26 @@
 
 ## 📂 Database
 
-**Location:**  
-`~/var/lib/wordle-bot-data/bot.db`
+**Location:**
+By default, the database is stored in the `data/` directory within the project folder:
+`./data/bot.db`
+
+You can configure this path using the `DB_PATH` environment variable in a `.env` file.
+
+### ⚙️ Configuration (Optional)
+
+You can create a `.env` file to override default settings, but it is not required.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_PATH` | `./data/bot.db` | Path to the SQLite database |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (DEBUG, INFO, WARN, ERROR) |
 
 ### 🔍 View Schema
 
 Launch SQLite shell:
 ```bash
-sqlite3 bot.db
+sqlite3 data/bot.db
 ````
 
 Then inside SQLite:
@@ -107,16 +119,16 @@ pm2 logs wordle-bot
 **Backup the database:**
 
 ```bash
-cp ~/var/lib/wordle-bot-data/bot.db ~/var/lib/wordle-bot-data/bot_backup.db
+cp data/bot.db data/bot_backup.db
 ```
 
 **Restore from backup:**
 
 ```bash
-cp ~/var/lib/wordle-bot-data/bot_backup.db ~/var/lib/wordle-bot-data/bot.db
+cp data/bot_backup.db data/bot.db
 ```
 
 ---
 
 **Author:** Yuvaraja P
-**Last Updated:** November 2025
+**Last Updated:** January 2026
